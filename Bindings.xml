@@ -1,0 +1,5 @@
+<Bindings>
+  <Binding name="ERRANDMASTER_WHEEL" header="ERRANDMASTER" category="ADDONS">
+    ErrandMaster_OpenWheel();
+  </Binding>
+</Bindings>

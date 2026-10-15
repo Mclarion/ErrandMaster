@@ -1,0 +1,3 @@
+.testdeps/
+.venv/
+*.zip

@@ -1,0 +1,16 @@
+## Interface: 16001
+## Title: ErrandMaster - Smart Route Planner
+## Notes: Manual errands and same-map route planning for WoW Forever
+## Author: ErrandMaster contributors
+## Version: 0.3.0
+## SavedVariables: ErrandMasterDB
+
+Core/Database.lua
+Core/Errands.lua
+Data/ServiceLocations.lua
+Data/Discovery.lua
+Routing/RoutePlanner.lua
+Routing/Navigation.lua
+UI/RadialMenu.lua
+UI/MainWindow.lua
+Core/Init.lua
