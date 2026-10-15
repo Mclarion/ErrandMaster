@@ -5,7 +5,7 @@ An early, **source-only** WoW: Forever addon (v0.3.0). It stores personal errand
 ## Install and verify in game
 
 1. Copy this `ErrandMaster` directory (excluding `.testdeps`, `.venv`, `tests`, `tools`, and `.gitignore`) to the **Forever** client `Interface/AddOns/ErrandMaster`, not the Retail or Classic Era client. Include `Bindings.xml` and `Textures/HiddenCursor.blp`; they are required runtime assets. The beta path observed in September 2026 was `World of Warcraft/_classic_beta_/Interface/AddOns/ErrandMaster`.
-2. The Forever Beta `WowB.exe` file version was read remotely as **1.60.1.70374**; the game was stopped and ErrandMaster was not installed there. In the actual client, use `/dump select(2, GetBuildInfo())` for the build and `/dump select(4, GetBuildInfo())` for the interface. Compare the latter to `## Interface: 16001`. No live API assertion has been made for build 70374.
+2. The Forever Beta `WowB.exe` file version was read remotely as **1.60.1.70374**. The audited addon source was published at `github.com/Mclarion/ErrandMaster`, installed while the game was stopped, and all 13 installed files were hash-matched to the source package. Four existing addon-state files were explicitly enabled with their previous bytes backed up. In the actual client, use `/dump select(2, GetBuildInfo())` for the build and `/dump select(4, GetBuildInfo())` for the interface. Compare the latter to `## Interface: 16001`. No live API assertion has been made for build 70374.
 3. Enable the addon on the character selection AddOns screen and log in. If initialization fails, check chat and the game's Lua error display. Try `/em help`, `/em add`, then add an errand, `/em route`, `/em next`, and `/reload`.
 4. Confirm an errand survives `/reload`, logout/login, and a full restart on the actual installed build. Persistence is unverified outside a Lua mock.
 
@@ -59,7 +59,7 @@ In-client checklist on **1.60.1.70374**: first install and interface number; whe
 
 ## Next milestones
 
-1. Before a live-client test, decide on publication of the audited visible addon source (Blizzard's UI Add-On Development Policy requires freely viewable code). Validate the reported Forever build/interface and native service-event/POI contracts; fix any live incompatibility, verify save/reload and waypoint ownership. No public publication or installation happened in this task.
+1. Run the installed addon in Forever Beta to verify its interface number and native service-event/POI contracts; fix any live incompatibility, verify save/reload and waypoint ownership. Source publication and file installation alone are not game tests.
 2. Verify the click-to-confirm wheel and keybinding in the real client, then add compact tracker and persistent window scale/position.
 3. Add opt-in durability/bag-space suggestions only after checking accessible, nonsecret APIs; leave class/profession suggestions manual until verified.
 4. Add a validated bank/trainer interaction path if exposed by build 70374; only then consider a separately sourced/attributed location pack and zone-aware navigation with reachable transport edges.
