@@ -30,5 +30,6 @@ loadfile = runtime.eval("loadfile")
 for path in [*paths, *sorted((ROOT / "tests").glob("*.lua"))]:
     loadfile(str(path))
 print(f"TOC and syntax: {len(paths)} runtime Lua files")
-for script in ("test_core.lua", "test_locations.lua", "test_discovery.lua", "test_radial.lua", "test_boot.lua"):
+for script in ("test_core.lua", "test_locations.lua", "test_discovery.lua", "test_quests.lua",
+               "test_radial.lua", "test_world_map.lua", "test_boot.lua"):
     LuaRuntime().execute(f'dofile("tests/{script}")')

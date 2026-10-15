@@ -13,7 +13,38 @@ loadModule("Routing/Navigation.lua")
 local function fails(fn) assert(not pcall(fn), "expected invalid input to fail") end
 ErrandMasterDB = nil
 addon.db:Initialize("Test-Realm")
-assert(ErrandMasterDB.schema == 2 and ErrandMasterDB.settings.discoverServices == false)
+assert(ErrandMasterDB.schema == 3 and ErrandMasterDB.settings.discoverServices == false)
+assert(#ErrandMasterDB.settings.wheelSlots == 7)
+assert(ErrandMasterDB.settings.wheelSlots[1].category == "Repair")
+assert(ErrandMasterDB.settings.wheelSlots[7].category == "Custom")
+ErrandMasterDB.settings.wheelSlots[2] = {type="spell", id=12345}
+addon.db:Initialize("Other-Realm")
+assert(ErrandMasterDB.settings.wheelSlots[2].id == 12345, "wheel slots are account-wide")
+addon.db:Initialize("Test-Realm")
+local legacy = {schema=2, nextId=1, nextLocationId=1, account={}, characters={},
+  locations={}, settings={wheelRadius=110, wheelIconSize=46}}
+ErrandMasterDB = legacy
+addon.db:Initialize("Test-Realm")
+assert(ErrandMasterDB == legacy and legacy.schema == 3 and #legacy.settings.wheelSlots == 7)
+ErrandMasterDB.settings.wheelSlots[3] = {type="macro", id=42}
+addon.db:Initialize("Test-Realm")
+assert(ErrandMasterDB.settings.wheelSlots[3].id == 42)
+ErrandMasterDB.settings.wheelSlots[3] = {type="macro", id=0}
+ErrandMasterDB.settings.wheelSlots[4] = {type="category", category="bad\nname"}
+ErrandMasterDB.settings.wheelSlots[5] = {type="spell", id=999999999999999999}
+ErrandMasterDB.settings.wheelSlots[6] = {type="macro", id=2, script="/cast x"}
+ErrandMasterDB.settings.wheelSlots[8] = {type="spell", id=123}
+local secret = {type="spell", id=777}
+issecretvalue = function(value) return value == secret end
+ErrandMasterDB.settings.wheelSlots[7] = secret
+addon.db:Initialize("Test-Realm")
+issecretvalue = nil
+assert(#ErrandMasterDB.settings.wheelSlots == 7)
+assert(ErrandMasterDB.settings.wheelSlots[3].category == "Auction House")
+assert(ErrandMasterDB.settings.wheelSlots[4].category == "Mailbox")
+assert(ErrandMasterDB.settings.wheelSlots[5].category == "Vendor")
+assert(ErrandMasterDB.settings.wheelSlots[6].category == "Class Trainer")
+assert(ErrandMasterDB.settings.wheelSlots[7].category == "Custom")
 ErrandMasterDB.settings.wheelRadius = 0/0
 ErrandMasterDB.settings.wheelIconSize = 0/0
 addon.db:Initialize("Test-Realm")

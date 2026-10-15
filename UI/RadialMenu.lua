@@ -13,7 +13,68 @@ for i = 1, #categories do
 end
 
 local function usable(value)
-  return value ~= nil and (not issecretvalue or not issecretvalue(value))
+  if value == nil then return false end
+  if type(issecretvalue) == "function" then
+    local ok, secret = pcall(issecretvalue, value)
+    if not ok or secret then return false end
+  end
+  if type(value) == "table" and type(issecrettable) == "function" then
+    local ok, secret = pcall(issecrettable, value)
+    if not ok or secret then return false end
+  end
+  return true
+end
+local function apiMethod(namespace, name)
+  if not usable(namespace) or type(namespace) ~= "table" then return end
+  local ok, method = pcall(function() return namespace[name] end)
+  if ok and usable(method) and type(method) == "function" then return method end
+end
+local function safeLabel(value)
+  return usable(value) and type(value) == "string" and #value > 0 and
+    #value <= 80 and not value:find("[%c|]")
+end
+local function numeric(text, max)
+  if not usable(text) or type(text) ~= "string" or not text:match("^%d+$") then return end
+  local value = tonumber(text)
+  if value and value >= 1 and value <= max and value % 1 == 0 then return value end
+end
+local function entryAt(index)
+  local ok, entry = pcall(function()
+    local slots = addon.db.data.settings.wheelSlots
+    if not usable(slots) or type(slots) ~= "table" then return end
+    local item = slots[index]
+    if type(item) ~= "table" or not usable(item) then return end
+    local kind = item.type
+    if not usable(kind) then return end
+    if kind == "category" and safeLabel(item.category) and #item.category <= 40 then
+      return {type="category", category=item.category}
+    end
+    if (kind == "spell" or kind == "macro") and usable(item.id) and
+        type(item.id) == "number" and item.id >= 1 and item.id <= 2147483647 and
+        item.id % 1 == 0 then return {type=kind, id=item.id} end
+  end)
+  return ok and entry or {type="category", category=categories[index]}
+end
+local function display(entry)
+  if entry.type == "category" then return entry.category, icon end
+  local label = (entry.type == "spell" and "Spell #" or "Macro #") .. entry.id
+  local spellInfo = entry.type == "spell" and apiMethod(C_Spell, "GetSpellInfo")
+  local macroName = entry.type == "macro" and apiMethod(C_Macro, "GetMacroName")
+  if spellInfo then
+    local ok, info = pcall(spellInfo, entry.id)
+    if ok and usable(info) and type(info) == "table" then
+      local nameOK, name, image = pcall(function() return info.name, info.iconID end)
+      if nameOK then
+        if safeLabel(name) then label = name end
+        if usable(image) and type(image) == "number" and image > 0 and
+            image <= 2147483647 and image % 1 == 0 then return label, image end
+      end
+    end
+  elseif macroName then
+    local ok, name = pcall(macroName, entry.id)
+    if ok and safeLabel(name) then label = name end
+  end
+  return label, icon
 end
 local function outOfCombat()
   if not usable(InCombatLockdown) or type(InCombatLockdown) ~= "function" then return false end
@@ -47,6 +108,17 @@ local function caption(parent, title, x, y)
   f:SetText(title)
   return f
 end
+local function edit(parent, title, x, y, width, limit)
+  caption(parent, title, x, y)
+  local field = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+  field:SetSize(width, 22)
+  field:SetPoint("TOPLEFT", x + 7, y - 17)
+  field:SetAutoFocus(false)
+  field:SetMaxLetters(limit)
+  field:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+  field:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+  return field
+end
 
 function wheel:Create()
   if self.frame then return end
@@ -60,9 +132,16 @@ function wheel:Create()
   frame:SetScript("OnMouseDown", function(_, mouse)
     if mouse ~= "LeftButton" then wheel:Close(); return end
     wheel:UpdateHighlight()
-    local category = wheel.selected and categories[wheel.selected]
+    local entry = wheel.selected and entryAt(wheel.selected)
     wheel:Close()
-    if category then addon.ui:OpenCategory(category) end
+    if entry then
+      if entry.type == "category" then addon.ui:OpenCategory(entry.category)
+      else
+        local name = display(entry)
+        addon:Print((entry.type == "spell" and "Spell" or "Macro") .. " " .. name ..
+          " (#" .. entry.id .. ") selected; not executed.")
+      end
+    end
   end)
   frame:SetScript("OnKeyDown", function(_, key)
     if key == "ESCAPE" then wheel:Close() end
@@ -91,6 +170,9 @@ function wheel:Layout()
   self.centerLabel:ClearAllPoints()
   self.centerLabel:SetPoint("CENTER", UIParent, "BOTTOMLEFT", self.centerX, self.centerY)
   for i, slot in ipairs(self.slots) do
+    local name, texture = display(entryAt(i))
+    slot.label:SetText(name)
+    slot.texture:SetTexture(texture)
     local vector = directions[i]
     slot.texture:SetSize(iconSize, iconSize)
     slot.texture:ClearAllPoints()
@@ -114,7 +196,7 @@ function wheel:SetSelection(index)
       slot.label:SetTextColor(.9, .9, .9)
     end
   end
-  self.centerLabel:SetText(index and categories[index] or "×")
+  self.centerLabel:SetText(index and display(entryAt(index)) or "×")
 end
 function wheel:UpdateHighlight()
   if not self.frame or not self.frame:IsShown() then return end
@@ -160,6 +242,41 @@ end
 
 function wheel:Notice(message)
   if self.status then self.status:SetText(message) end
+end
+function wheel:AssignSlot()
+  if not outOfCombat() then self:Notice("Change wheel slots out of combat."); return false end
+  local ok, slotText, kind, value = pcall(function()
+    return self.slotNumber:GetText(), self.slotType:GetText(), self.slotValue:GetText()
+  end)
+  if not ok or not usable(kind) or not usable(value) then
+    self:Notice("Invalid slot entry."); return false
+  end
+  local slot = numeric(slotText, 7)
+  if not slot then self:Notice("Choose a slot from 1 to 7."); return false end
+  local entry
+  if kind == "category" and safeLabel(value) and #value <= 40 then
+    entry = {type=kind, category=value}
+  elseif kind == "spell" or kind == "macro" then
+    local id = numeric(value, 2147483647)
+    if id then
+      local macroName = kind == "macro" and apiMethod(C_Macro, "GetMacroName")
+      if macroName then
+        local found, name = pcall(macroName, id)
+        if not found or not safeLabel(name) then
+          self:Notice("Macro ID not found; choose an existing macro."); return false
+        end
+      end
+      entry = {type=kind, id=id}
+    end
+  end
+  if not entry then self:Notice("Use category text or a positive numeric spell/macro ID."); return false end
+  local settings = addon.db.data.settings
+  if type(settings.wheelSlots) ~= "table" or not usable(settings.wheelSlots) then
+    settings.wheelSlots = {}
+  end
+  settings.wheelSlots[slot] = entry
+  self:Notice("Slot " .. slot .. " set to " .. display(entry) .. ".")
+  return true
 end
 function wheel:StopCapture()
   if not self.capture then return end
@@ -274,7 +391,7 @@ function wheel:ShowSettings()
   if not self.settingsFrame then
     local frame = CreateFrame("Frame", "ErrandMasterWheelSettings", UIParent,
       "BasicFrameTemplateWithInset")
-    frame:SetSize(365, 285)
+    frame:SetSize(390, 370)
     frame:SetPoint("CENTER")
     frame:SetFrameStrata("DIALOG")
     frame:SetMovable(true)
@@ -306,8 +423,15 @@ function wheel:ShowSettings()
       function() adjust("wheelIconSize", -4, 32, 72) end)
     control(frame, "Icon +", 269, -178, 72,
       function() adjust("wheelIconSize", 4, 32, 72) end)
-    control(frame, "Preview wheel", 22, -219, 155,
+    self.slotNumber = edit(frame, "Slot (1-7)", 22, -221, 55, 1)
+    self.slotType = edit(frame, "Type", 105, -221, 105, 8)
+    self.slotValue = edit(frame, "Category or numeric ID", 233, -221, 125, 40)
+    self.applySlotButton = control(frame, "Assign slot", 22, -274, 155,
+      function() wheel:AssignSlot() end)
+    control(frame, "Preview wheel", 192, -274, 155,
       function() wheel:Open() end)
+    caption(frame, "Type: category, spell, macro. Defaults: Repair, Bank,", 22, -319)
+    caption(frame, "Auction House, Mailbox, Vendor, Class Trainer, Custom.", 22, -337)
     self.capture = CreateFrame("Frame", nil, frame)
     self.capture:SetAllPoints(frame)
     self.capture:EnableKeyboard(false)

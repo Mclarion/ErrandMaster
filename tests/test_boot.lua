@@ -43,9 +43,11 @@ loadModule("Core/Database.lua")
 loadModule("Core/Errands.lua")
 loadModule("Data/ServiceLocations.lua")
 loadModule("Data/Discovery.lua")
+loadModule("Data/Quests.lua")
 loadModule("Routing/RoutePlanner.lua")
 loadModule("Routing/Navigation.lua")
 loadModule("UI/RadialMenu.lua")
+loadModule("UI/WorldMap.lua")
 loadModule("UI/MainWindow.lua")
 loadModule("Core/Init.lua")
 assert(eventFrame and eventFrame.scripts.OnEvent)
@@ -106,8 +108,47 @@ SlashCmdList.ERRANDMASTER("settings")
 SlashCmdList.ERRANDMASTER("optimize")
 SlashCmdList.ERRANDMASTER("debug")
 SlashCmdList.ERRANDMASTER("help")
+C_Map.GetMapWorldSize = function(id) assert(id == 10); return 1000, 500 end
+C_QuestLog = {
+  GetQuestsOnMap=function(id) return id == 10 and {{questID=501, mapID=10, x=.4, y=.5}} or {} end,
+  GetLogIndexForQuestID=function(id) return id == 501 and 1 or nil end,
+  GetInfo=function() return {title="Active quest", questID=501, isHeader=false} end,
+}
+addon.quests:Invalidate()
+SlashCmdList.ERRANDMASTER("quest 501")
+local ordered, deferred, map, px, py = addon:Plan()
+assert(map == 10 and px == .2 and py == .3 and #ordered == 3 and #deferred == 0)
+local quest
+for _, item in ipairs(ordered) do if item.questID == 501 then quest = item end end
+assert(quest and quest.directYards and quest.directYards > 0)
+local hasDistance = false
+for _, row in ipairs(addon.ui.rows) do
+  if row.text and row.text:find("yd direct", 1, true) then hasDistance = true end
+end
+assert(hasDistance and addon.ui.summary.text:find("yd direct", 1, true),
+  "the main route window must label straight-line distance")
+assert(addon.ui.mapButton, "the main window needs a map access button")
+SlashCmdList.ERRANDMASTER("pin My marker")
+assert(#addon.errands:All() == 4 and addon.errands:All()[4].category == "Pin")
+SlashCmdList.ERRANDMASTER("map") -- Native map may be unavailable in a bare test harness.
+local refreshedAfterCombat = 0
+local oldRefresh = addon.worldMap.Refresh
+addon.worldMap.Refresh = function() refreshedAfterCombat=refreshedAfterCombat+1 end
+eventFrame.scripts.OnEvent(eventFrame, "PLAYER_REGEN_ENABLED")
+assert(refreshedAfterCombat == 1, "map overlay must retry after combat")
+addon.worldMap.Refresh = oldRefresh
 issecretvalue = function(value) return value == 10 end
 assert(addon:Position() == nil)
 C_Map = setmetatable({}, {__index=function() error("protected map namespace") end})
 assert(addon:Position() == nil)
+issecretvalue = function() return false end
+local touched = 0
+local protectedVector = setmetatable({}, {__index=function()
+  touched = touched + 1; error("protected vector indexed")
+end})
+issecrettable = function(value) return value == protectedVector end
+C_Map = {GetBestMapForUnit=function() return 10 end,
+  GetPlayerMapPosition=function() return protectedVector end}
+assert(addon:Position() == 10 and touched == 0,
+  "reject protected position before member access")
 print("boot mock passed")

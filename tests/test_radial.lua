@@ -12,6 +12,8 @@ local function fakeFrame()
     if key == "Hide" then return function(self) self.shown=false; if self.scripts.OnHide then self.scripts.OnHide(self) end end end
     if key == "IsShown" then return function(self) return self.shown end end
     if key == "SetText" then return function(self, value) self.text=value end end
+    if key == "GetText" then return function(self) return self.text end end
+    if key == "SetTexture" then return function(self, value) self.texture=value end end
     return function() end
   end})
   f.TitleText = {SetText=function() end}
@@ -28,7 +30,8 @@ SetCursor = function(path) cursorCalls[#cursorCalls+1] = path or "restore"; retu
 InCombatLockdown = function() return false end
 local opened = {}
 addon.ui.OpenCategory = function(_, category) opened[#opened+1]=category end
-addon.Print = function() end
+local printed = {}
+addon.Print = function(_, value) printed[#printed+1] = value end
 local chunk = assert(loadfile("UI/RadialMenu.lua")); chunk("ErrandMaster", addon)
 local wheel = addon.radial
 assert(wheel:Open() and wheel.frame:IsShown())
@@ -130,6 +133,78 @@ wheel.bindButton.scripts.OnClick(wheel.bindButton)
 wheel.capture.scripts.OnKeyDown(wheel.capture, "F9")
 assert(currentKey == "F7" and not wheel.capture:IsShown())
 SetBinding = originalSetBinding
+-- Settings allow all three entry types; selecting numeric entries only reports them.
+assert(wheel.slotNumber and wheel.slotType and wheel.slotValue and wheel.applySlotButton)
+wheel.slotNumber:SetText("2"); wheel.slotType:SetText("category")
+wheel.slotValue:SetText("Supply run")
+wheel.applySlotButton.scripts.OnClick(wheel.applySlotButton)
+assert(addon.db.data.settings.wheelSlots[2].category == "Supply run")
+assert(wheel:Open())
+assert(wheel.slots[2].label.text == "Supply run")
+mouseX,mouseY=960+110*math.cos(math.pi/2-2*math.pi/7),540+110*math.sin(math.pi/2-2*math.pi/7)
+wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
+assert(opened[#opened] == "Supply run")
+C_Spell = {GetSpellInfo=function(id)
+  assert(id == 1234)
+  return {name="Safe Spell", iconID=135000}
+end}
+C_Macro = {GetMacroName=function(id)
+  if id == 7 then return "Safe Macro" end
+end}
+RunMacro = function() error("macro executed") end
+RunMacroText = function() error("macro text executed") end
+CastSpell = function() error("spell cast") end
+local function assign(slot, kind, value)
+  wheel.slotNumber:SetText(slot); wheel.slotType:SetText(kind)
+  wheel.slotValue:SetText(value); wheel.applySlotButton.scripts.OnClick(wheel.applySlotButton)
+end
+assign("1", "spell", "1234")
+assert(addon.db.data.settings.wheelSlots[1].id == 1234)
+mouseX,mouseY=960,540
+assert(wheel:Open() and wheel.slots[1].label.text == "Safe Spell")
+assert(wheel.slots[1].texture.texture == 135000)
+mouseY=650; wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
+assert(printed[#printed]:find("Safe Spell",1,true) and printed[#printed]:find("not executed",1,true))
+assign("3", "macro", "7")
+assert(addon.db.data.settings.wheelSlots[3].id == 7)
+mouseX,mouseY=960,540
+assert(wheel:Open() and wheel.slots[3].label.text == "Safe Macro")
+local angle = math.pi/2-2*2*math.pi/7
+mouseX,mouseY=960+110*math.cos(angle),540+110*math.sin(angle)
+wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
+assert(printed[#printed]:find("Safe Macro",1,true) and printed[#printed]:find("not executed",1,true))
+local previous = addon.db.data.settings.wheelSlots[3]
+assign("8", "spell", "1234")
+assign("3", "macro", "8") -- Missing macro must not replace slot.
+assign("3", "macro", "7; /cast x")
+assign("3", "spell", "0")
+assign("3", "category", "bad\nname")
+assert(addon.db.data.settings.wheelSlots[3] == previous)
+InCombatLockdown = function() return true end
+assign("3", "category", "Combat change")
+assert(addon.db.data.settings.wheelSlots[3] == previous)
+InCombatLockdown = function() return false end
+C_Spell, C_Macro = nil, nil
+assign("4", "spell", "1234")
+assign("5", "macro", "7")
+mouseX,mouseY=960,540
+assert(wheel:Open() and wheel.slots[4].label.text == "Spell #1234"
+  and wheel.slots[5].label.text == "Macro #7")
+wheel:Close()
+local protectedNamespace = setmetatable({}, {__index=function() error("protected API namespace") end})
+C_Spell, C_Macro = protectedNamespace, protectedNamespace
+assert(wheel:Open() and wheel.slots[4].label.text == "Spell #1234"
+  and wheel.slots[5].label.text == "Macro #7",
+  "blocked metadata APIs must leave wheel selection usable")
+wheel:Close()
+assign("6", "macro", "7")
+assert(addon.db.data.settings.wheelSlots[6].id == 7)
+C_Spell, C_Macro = nil, nil
+local secretID = "555"
+issecretvalue = function(value) return value == secretID end
+assign("4", "spell", secretID)
+assert(addon.db.data.settings.wheelSlots[4].id == 1234)
+issecretvalue = nil
 wheel.capture.SetPropagateKeyboardInput = function() error("restricted") end
 wheel.bindButton.scripts.OnClick(wheel.bindButton)
 assert(not wheel.capture:IsShown())

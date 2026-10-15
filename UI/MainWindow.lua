@@ -51,7 +51,7 @@ function ui:Create()
   self.zone = label(frame, "", 18, -35)
   self.message = label(frame, "", 18, -555)
   self.rows = {}
-  label(frame, "Same-map route (estimated straight-line order)", 18, -61)
+  label(frame, "Same-map route (straight-line estimate; not travel time)", 18, -61)
   for i = 1, 8 do
     local row = button(frame, "", 18, -77 - (i-1)*31, 420, function()
       local item = ui.visible[i]
@@ -125,6 +125,8 @@ function ui:Create()
   button(frame, "Wheel settings", 18, -509, 160, function()
     addon.radial:ShowSettings()
   end)
+  self.mapButton = button(frame, "Map destinations", 190, -509, 155,
+    function() addon:Command("map") end)
   self:Refresh()
 end
 function ui:Notice(message)
@@ -191,8 +193,7 @@ function ui:Refresh()
     addon.db.data.settings.defaultScope, addon.db.data.settings.useTomTom and "on" or "off"))
   self.discoveryButton:SetText("Discover services: " ..
     (addon.db.data.settings.discoverServices and "on" or "off"))
-  local active, deferred = addon.route:Plan(addon.errands:All(), map, x, y,
-    addon.db.data.settings.optimize, addon.locations:All())
+  local active, deferred = addon:Plan()
   self.visible = {}
   local entries = {}
   for _, item in ipairs(active) do entries[#entries+1] = {item=item, status="Route"} end
@@ -207,14 +208,17 @@ function ui:Refresh()
     if entry then
       local item = entry.item
       self.visible[i] = item
-      row:SetText(string.format("%s  [%s] %s  %s", item.id == self.selected and ">" or " ", entry.status,
+      row:SetText(string.format("%s  [%s] %s  %s%s", item.id == self.selected and ">" or " ", entry.status,
         item.name, item.x and string.format("(%s%.1f, %.1f)",
-          item.approximate and "~" or "", item.x*100, item.y*100) or "(no position)"))
+          item.approximate and "~" or "", item.x*100, item.y*100) or "(no position)",
+        item.directYards and string.format(" ~%.0f yd direct", item.directYards) or ""))
       row:Show()
     else row:Hide() end
   end
-  self.summary:SetText(string.format("%d routed | %d unrouted | %d completed | page %d/%d",
-    #active, #deferred, completed, self.page, math.max(1, math.ceil(#entries/8))))
+  self.summary:SetText(string.format("%d routed | %d unrouted | %d done | page %d/%d%s",
+    #active, #deferred, completed, self.page, math.max(1, math.ceil(#entries/8)),
+    active[#active] and active[#active].cumulativeYards and
+      string.format(" | ~%.0f yd direct total", active[#active].cumulativeYards) or ""))
   local chosen = self.selected and addon.errands:Get(self.selected)
   self.selectedText:SetText(chosen and (chosen.name .. " [" .. chosen.scope .. "]") or "None")
 end

@@ -8,7 +8,7 @@ loadModule("Core/Errands.lua")
 loadModule("Data/ServiceLocations.lua")
 loadModule("Routing/RoutePlanner.lua")
 addon.db:Initialize("Test-Realm")
-assert(ErrandMasterDB.schema == 2 and ErrandMasterDB.characters["Test-Realm"][1].id == "em-3")
+assert(ErrandMasterDB.schema == 3 and ErrandMasterDB.characters["Test-Realm"][1].id == "em-3")
 assert(ErrandMasterDB.settings.discoverServices == false)
 local locations = addon.locations
 local near = locations:Add("Repair", "Repair-capable merchant", 10, .2, .2, "service-event")

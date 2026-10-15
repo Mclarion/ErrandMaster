@@ -4,7 +4,7 @@ local errands = addon.errands
 local db = addon.db
 local MAX_ERRANDS = 200
 local fields = {name=true, description=true, category=true, priority=true, mapID=true,
-  x=true, y=true, npcID=true, target=true, origin=true, scope=true}
+  x=true, y=true, npcID=true, target=true, origin=true, scope=true, questID=true}
 local function coordinate(n)
   return type(n) == "number" and n == n and n >= 0 and n <= 1
 end
@@ -20,6 +20,8 @@ local function validate(item)
   assert(item.origin == "manual" or item.origin == "suggested", "invalid origin")
   assert(item.target == nil or (type(item.target) == "string" and #item.target <= 120), "invalid target")
   assert(item.npcID == nil or positiveInteger(item.npcID), "invalid NPC ID")
+  assert(item.questID == nil or (positiveInteger(item.questID) and item.questID <= 1000000000 and
+    item.scope == "character" and item.category == "Quest"), "invalid quest association")
   assert((item.mapID == nil and item.x == nil and item.y == nil) or
     (positiveInteger(item.mapID) and coordinate(item.x) and coordinate(item.y)),
     "map ID and normalized X/Y coordinates must be supplied together")
