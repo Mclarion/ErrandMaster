@@ -2,31 +2,51 @@ local _, addon = ...
 addon.radial = {}
 local wheel = addon.radial
 local ACTION = "ERRANDMASTER_WHEEL"
-local CURSOR = "Interface\\AddOns\\ErrandMaster\\Textures\\HiddenCursor.blp"
-local categories = {"Repair", "Bank", "Auction House", "Mailbox", "Vendor",
-  "Class Trainer", "Custom"}
-local vendors = {"Vendor", "Ammo Vendor", "Reagent Vendor", "Food Vendor",
-  "Profession Vendor", "Custom", "Back"}
+
+local categories = {"Bank", "Auction House", "Repair", "Vendor", "Mailbox",
+  "Trainer", "Travel", "Custom", "Quests", "Skills", "Items"}
+local menus = {
+  Bank={"Personal Bank", "Guild Bank", "Back"},
+  Vendor={"Food", "Reagents", "Ammo", "Profession Vendor", "General Goods", "Back"},
+  ["Profession Vendor"]={"Back"},
+  ["Profession Supplies"]={"Back"},
+  Mailbox={"Inbox", "Back"},
+  Trainer={"Class Trainer", "Profession Trainer", "Weapon Trainer", "Back"},
+  Travel={"Flight Master", "Portal", "Boat", "Hearthstone", "Waypoint", "Favorites", "Back"},
+  Waypoint={"Pin", "Back"},
+  Favorites={"Add Coordinates", "Current Favorites", "Remove Favorite", "Back"},
+  Custom={"New Errand", "Saved Errands", "Settings", "Back"},
+  Quests={"Active Quests", "Back"},
+}
 local quickServices = {Repair=true, Bank=true, ["Auction House"]=true,
   Mailbox=true, Vendor=true, ["Class Trainer"]=true,
   ["Profession Trainer"]=true, ["Ammo Vendor"]=true,
-  ["Reagent Vendor"]=true, ["Food Vendor"]=true, ["Profession Vendor"]=true}
-local icon = "Interface\\Icons\\INV_Misc_QuestionMark"
+  ["Reagent Vendor"]=true, ["Food Vendor"]=true, ["Profession Vendor"]=true,
+  ["Flight Master"]=true}
 local assetRoot = "Interface\\AddOns\\ErrandMaster\\Textures\\"
+local icon = assetRoot .. "PackLogo.blp"
 local classes = {DEATHKNIGHT="Death Knight", DEMONHUNTER="Demon Hunter",
   DRUID="Druid", EVOKER="Evoker", HUNTER="Hunter", MAGE="Mage",
   MONK="Monk", PALADIN="Paladin", PRIEST="Priest", ROGUE="Rogue",
   SHAMAN="Shaman", WARLOCK="Warlock", WARRIOR="Warrior"}
+local primaryProfessions = {"Alchemy", "Blacksmithing", "Enchanting", "Engineering",
+  "Herbalism", "Leatherworking", "Mining", "Skinning", "Tailoring"}
+local commonProfessions = {"Cooking", "First Aid", "Fishing"}
 local palettes = {Azure={.42, .76, 1}, Ember={1, .48, .24},
   Violet={.78, .55, 1}, Slate={.75, .83, .85}}
-local swatches = {"Copper", "Amber", "Green", "Blue", "Teal", "Violet", "Rose", "Slate"}
-local swatchRGB = {Copper={.95,.48,.25}, Amber={1,.78,.24}, Green={.42,.94,.48},
-  Blue={.40,.67,1}, Teal={.28,.89,.81}, Violet={.72,.56,1},
-  Rose={1,.50,.68}, Slate={.68,.77,.82}}
+local swatches = {"Red", "Amber", "Green", "Blue", "Gold", "Violet", "Magenta",
+  "Teal", "Copper", "Rose", "Slate"}
+local swatchRGB = {Copper={.68,.47,.27}, Amber={.95,.63,.27}, Green={.30,.77,.43},
+  Blue={.35,.55,.89}, Teal={.29,.75,.84}, Violet={.68,.45,.84},
+  Rose={1,.50,.68}, Slate={.68,.77,.82}, Red={.84,.27,.28},
+  Gold={.95,.75,.29}, Magenta={.77,.34,.73}}
 local function colorKey(entry)
   if not entry then return end
   if entry.type == "category" then return entry.category end
   if entry.type == "folder" then return "Folder" end
+  if entry.type == "quest" then return "Quests" end
+  if entry.type == "favorite" or entry.type == "removeFavorite" then return "Favorites" end
+  if wheel.submenu == "Skills" or wheel.submenu == "Items" then return wheel.submenu end
   return "Preview"
 end
 local function entryColor(entry)
@@ -36,11 +56,25 @@ local function entryColor(entry)
   if type(overrides) == "table" and overrides[category] then return overrides[category] end
   if category == "Folder" then return "Blue" end
   if category == "Preview" then return "Rose" end
-  if category:find("Vendor", 1, true) then return "Amber" end
-  if category:find("Trainer", 1, true) then return "Green" end
-  if category == "Repair" then return "Copper" end
-  if category == "Mailbox" then return "Teal" end
+  if category == "Food" then return "Red" end
+  if category == "Reagents" then return "Violet" end
+  if category == "Ammo" then return "Copper" end
+  if category == "Blacksmithing Vendor" then return "Amber" end
+  if category:find("Vendor", 1, true) or category == "Profession Supplies" or
+      category == "General Goods" then return "Green" end
+  if category:find("Trainer", 1, true) or category == "Trainer" then return "Blue" end
+  if category == "Repair" then return "Red" end
+  if category == "Mailbox" or category == "Inbox" then return "Amber" end
   if category == "Auction House" then return "Violet" end
+  if category == "Travel" or category == "Quests" or category == "Flight Master" or
+      category == "Portal" or category == "Boat" or category == "Hearthstone" or
+      category == "Waypoint" or category == "Pin" or category == "Select Current" then return "Gold" end
+  if category == "Custom" or category == "New Errand" or category == "Saved Errands" or
+      category == "Favorites" or category == "Settings" then return "Magenta" end
+  if category == "Skills" then return "Teal" end
+  if category == "Items" then return "Copper" end
+  if category == "Bank" or category == "Personal Bank" or
+      category == "Guild Bank" then return "Blue" end
   if category == "Back" then return "Slate" end
   return "Blue"
 end
@@ -71,8 +105,119 @@ local function numeric(text, max)
   local value = tonumber(text)
   if value and value >= 1 and value <= max and value % 1 == 0 then return value end
 end
+local function submenuEntries()
+  local selected = wheel.submenu
+  if selected == "Waypoint" then
+    local result={{type="category",category="Pin"}}
+    if addon.travelPoints and type(addon.travelPoints.CurrentWaypoint)=="function" then
+      local ok, point=pcall(addon.travelPoints.CurrentWaypoint,addon.travelPoints)
+      if ok and usable(point) and type(point)=="table" then
+        result[#result+1]={type="category",category="Select Current"}
+      end
+    end
+    result[#result+1]={type="category",category="Back"}
+    return result
+  end
+  if selected == "Current Favorites" or selected == "Remove Favorite" then
+    local result = {}
+    if addon.travelPoints and type(addon.travelPoints.Favorites)=="function" then
+      local ok, errands=pcall(addon.travelPoints.Favorites,addon.travelPoints)
+      if ok and usable(errands) and type(errands) == "table" then
+        for _, item in ipairs(errands) do
+          if usable(item) and type(item) == "table" then
+            local valid, id, name, favorite, completed, map, x, y = pcall(function()
+              return item.id, item.name, item.favorite, item.completed,
+                item.mapID, item.x, item.y
+            end)
+            if valid and usable(id) and ((type(id)=="string" and
+                id:match("^em%-%d+$")) or (type(id)=="number" and id>=1 and
+                id%1==0)) and safeLabel(name) and #name <= 80 and
+                usable(favorite) and usable(completed) and favorite == true and
+                completed ~= true and #result < 23 then
+              local entry={type=selected=="Remove Favorite" and
+                "removeFavorite" or "favorite", id=id, name=name}
+              if usable(map) and usable(x) and usable(y) and type(map)=="number" and
+                  map>=1 and map<=1000000 and map%1==0 and type(x)=="number" and
+                  type(y)=="number" and x==x and y==y and x>=0 and x<=1 and
+                  y>=0 and y<=1 then entry.mapID,entry.x,entry.y=map,x,y end
+              result[#result+1]=entry
+            end
+          end
+        end
+      end
+    end
+    result[#result+1] = {type="category", category="Back"}
+    return result
+  end
+  if selected == "Active Quests" then
+    local result = {}
+    if addon.quests and type(addon.quests.OnMap) == "function" and
+        type(addon.Position) == "function" then
+      local positionOK, map = pcall(addon.Position, addon)
+      if positionOK and type(map) == "number" then
+        local ok, available = pcall(addon.quests.OnMap, addon.quests, map)
+        if ok and type(available) == "table" then
+          for _,quest in ipairs(available) do
+            if type(quest) == "table" and type(quest.questID) == "number" and
+                safeLabel(quest.title) and #quest.title <= 80 and #result < 23 then
+              result[#result+1] = {type="quest", id=quest.questID,
+                mapID=map, name=quest.title}
+            end
+          end
+        end
+      end
+    end
+    result[#result+1] = {type="category", category="Back"}
+    return result
+  end
+  if selected == "Skills" or selected == "Items" then
+    local settings = addon.db.data.settings
+    local entries = settings[selected == "Skills" and "wheelSkills" or "wheelItems"] or {}
+    local result = {}
+    for i = 1, math.min(#entries, 23) do result[i] = entries[i] end
+    result[#result+1] = {type="category", category="Back"}
+    return result
+  end
+  if selected == "Profession Vendor" or selected == "Profession Supplies" or
+      selected == "Profession Trainer" then
+    local result, seen, known = {}, {}, {}
+    if type(addon.ProfessionFilters) == "function" then
+      local ok, names = pcall(addon.ProfessionFilters, addon)
+      if ok and usable(names) and type(names) == "table" then known = names end
+    end
+    local allowed, primary = {}, {}
+    for _, name in ipairs(primaryProfessions) do allowed[name] = true; primary[name] = true end
+    for _, name in ipairs(commonProfessions) do allowed[name] = true end
+    local function add(name)
+      if allowed[name] and not seen[name] then
+        result[#result+1] = {type="category", category=name ..
+          (selected == "Profession Trainer" and " Trainer" or " Vendor")}
+        seen[name] = true
+      end
+    end
+    for i=1,math.min(#known, 24) do
+      local name=known[i]
+      if usable(name) and type(name)=="string" then add(name) end
+    end
+    local hasPrimary=false
+    for name in pairs(primary) do
+      if seen[name] then hasPrimary=true; break end
+    end
+    if not hasPrimary then for _, name in ipairs(primaryProfessions) do add(name) end end
+    for _, name in ipairs(commonProfessions) do add(name) end
+    result[#result+1] = {type="category", category="Back"}
+    return result
+  end
+  local options = menus[selected]
+  if not options then return end
+  local result = {}
+  for i, name in ipairs(options) do result[i] = {type="category", category=name} end
+  return result
+end
 local function entryAt(index)
-  if wheel.submenu == "vendor" then return {type="category", category=vendors[index]} end
+  if wheel.submenu and wheel.submenu ~= "folder" then
+    return (wheel.menuEntries or submenuEntries())[index]
+  end
   if wheel.submenu == "folder" then
     local folder = addon.db.data.settings.wheelSlots[wheel.folderIndex]
     if index == #folder.entries + 1 then return {type="category", category="Back"} end
@@ -105,14 +250,115 @@ local function entryAt(index)
 end
 local function display(entry)
   if not entry then return "", icon end
+  if entry.type == "quest" then return entry.name, assetRoot .. "ServiceQuests.blp" end
+  if entry.type == "favorite" or entry.type == "removeFavorite" then
+    return entry.name, assetRoot .. "PackFavourites.blp"
+  end
   if entry.type == "category" then
-    if entry.category == "Bank" then return "Bank", assetRoot .. "Bank.blp" end
-    if entry.category == "Class Trainer" and usable(UnitClass) and type(UnitClass) == "function" then
+    if entry.category == "Back" then
+      return "Back", assetRoot .. "PackBack.blp"
+    elseif entry.category == "Mailbox" or entry.category == "Inbox" then
+      return entry.category, assetRoot .. "PackMailbox.blp"
+    elseif entry.category == "Profession Trainer" then
+      return entry.category, assetRoot .. "PackProfessionTrainer.blp"
+    elseif entry.category == "General Goods" then
+      return entry.category, assetRoot .. "PackGeneral.blp"
+    elseif entry.category == "Profession Vendor" or entry.category == "Profession Supplies" then
+      return entry.category, assetRoot .. "PackProfessionVendor.blp"
+    elseif entry.category == "Herbalism Vendor" then
+      return entry.category, assetRoot .. "PackHerbalismVendor.blp"
+    elseif entry.category == "Herbalism Trainer" then
+      return entry.category, assetRoot .. "PackHerbalismTrainer.blp"
+    elseif entry.category == "Fishing Trainer" then
+      return entry.category, assetRoot .. "PackFishingTrainer.blp"
+    elseif entry.category == "Fishing Vendor" then
+      return entry.category, assetRoot .. "PackFishing.blp"
+    elseif entry.category == "Alchemy Trainer" then
+      return entry.category, assetRoot .. "PackAlchemyTrainer.blp"
+    elseif entry.category == "Alchemy Vendor" then
+      return entry.category, assetRoot .. "PackAlchemyVendor.blp"
+    elseif entry.category == "Blacksmithing Trainer" then
+      return entry.category, assetRoot .. "PackBlacksmithingTrainer.blp"
+    elseif entry.category == "Cooking Trainer" then
+      return entry.category, assetRoot .. "PackCookingTrainer.blp"
+    elseif entry.category == "First Aid Trainer" then
+      return entry.category, assetRoot .. "PackFirstAidTrainer.blp"
+    elseif entry.category == "Enchanting Trainer" then
+      return entry.category, assetRoot .. "PackEnchantmentTrainer.blp"
+    elseif entry.category == "Engineering Trainer" then
+      return entry.category, assetRoot .. "PackEngineeringTrainer.blp"
+    elseif entry.category == "Leatherworking Trainer" then
+      return entry.category, assetRoot .. "PackLeatherworkingTrainer.blp"
+    elseif entry.category == "Mining Trainer" then
+      return entry.category, assetRoot .. "PackMiningTrainer.blp"
+    elseif entry.category == "Tailoring Trainer" then
+      return entry.category, assetRoot .. "PackTailoringTrainer.blp"
+    elseif entry.category == "Favorites" or entry.category == "Current Favorites" or
+        entry.category == "Remove Favorite" then
+      return entry.category, assetRoot .. "PackFavourites.blp"
+    elseif entry.category ~= "Class Trainer" and entry.category:find(" Trainer$") then
+      return entry.category, assetRoot .. "PackProfessionTrainer.blp"
+    elseif entry.category == "Travel" then
+      return entry.category, assetRoot .. "PackTravel.blp"
+    elseif entry.category == "Flight Master" then
+      return entry.category, assetRoot .. "PackFlightMaster.blp"
+    elseif entry.category == "Portal" then
+      return entry.category, assetRoot .. "PackPortal.blp"
+    elseif entry.category == "Boat" then
+      return entry.category, assetRoot .. "PackBoat.blp"
+    elseif entry.category == "Hearthstone" then
+      return entry.category, assetRoot .. "PackHearthstone.blp"
+    elseif entry.category == "Waypoint" or entry.category == "Pin" or
+        entry.category == "Select Current" or entry.category == "Add Coordinates" then
+      return entry.category, assetRoot .. "PackWaypoint.blp"
+    elseif entry.category == "Quests" then
+      return entry.category, assetRoot .. "PackQuestmark.blp"
+    elseif entry.category == "Active Quests" then
+      return entry.category, assetRoot .. "PackQuestionQuestmark.blp"
+    elseif entry.category == "Settings" then
+      return entry.category, assetRoot .. "PackSettings.blp"
+    end
+    if entry.category == "Bank" or entry.category == "Personal Bank" then
+      return entry.category, assetRoot .. "PackBank.blp"
+    elseif entry.category == "Guild Bank" then
+      return "Guild Bank", assetRoot .. "PackGuild.blp"
+    elseif entry.category == "Repair" then
+      return "Repair", assetRoot .. "PackRepair.blp"
+    elseif entry.category == "Auction House" then
+      return "Auction House", assetRoot .. "PackAuctionHouse.blp"
+    elseif entry.category == "Food" then
+      return "Food", assetRoot .. "PackFood.blp"
+    elseif entry.category == "Reagents" then
+      return "Reagents", assetRoot .. "PackReagents.blp"
+    elseif entry.category == "Ammo" then
+      return "Ammo", assetRoot .. "PackAmmo.blp"
+    elseif entry.category == "Blacksmithing Vendor" then
+      return "Blacksmithing Vendor", assetRoot .. "PackBlacksmithingVendor.blp"
+    elseif entry.category == "Profession Vendor" or entry.category == "Profession Supplies" or
+        entry.category:find(" Vendor", 1, true) and
+        entry.category ~= "Food Vendor" and entry.category ~= "Reagent Vendor" and
+        entry.category ~= "Ammo Vendor" then
+      return entry.category, assetRoot .. "PackProfessionVendor.blp"
+    end
+    if entry.category == "Class Trainer" and usable(UnitClass) and
+        type(UnitClass) == "function" then
       local ok, _, token = pcall(UnitClass, "player")
       if ok and usable(token) and type(token) == "string" and classes[token] then
         return classes[token] .. " Trainer", assetRoot .. "Class" .. classes[token]:gsub(" ", "") .. ".blp"
       end
     end
+    local service = ({Repair="Repair", ["Auction House"]="Auction",
+      Mailbox="Mail", Inbox="Mail", Custom="Custom", Settings="Custom",
+      ["New Errand"]="Custom", ["Saved Errands"]="Custom",
+      Favorites="Favorites", Trainer="Trainer", Travel="Travel",
+      Quests="Quests", ["Active Quests"]="Quests", Skills="Skills",
+      Items="Items", ["Flight Master"]="Flight", Portal="Portal",
+      Boat="Boat", Hearthstone="Hearthstone", ["General Goods"]="Vendor",
+      Food="Vendor", Reagents="Vendor", Ammo="Vendor",
+      ["Profession Supplies"]="Vendor"})[entry.category]
+    if not service and entry.category:find("Vendor", 1, true) then service="Vendor" end
+    if not service and entry.category:find("Trainer", 1, true) then service="Trainer" end
+    if service then return entry.category, assetRoot .. "Service" .. service .. ".blp" end
     return entry.category, icon
   end
   if entry.type == "folder" then return entry.name, "Interface\\Icons\\INV_Misc_Bag_08" end
@@ -203,20 +449,290 @@ local function animate(frame)
   end)
   return ok and animation
 end
+local function wheelLabel(name)
+  if type(name) ~= "string" then return "" end
+  name = name:match("^[^\n]+") or ""
+  if name == "Auction House" then return "Auction" end
+  if name == "Class Trainer" then return "Trainer" end
+  if #name <= 11 then return name end
+  local cut = 9
+  while cut > 1 and name:byte(cut + 1) >= 128 and
+      name:byte(cut + 1) <= 191 do cut = cut - 1 end
+  return name:sub(1, cut) .. "..."
+end
+
+local function outerSize(count, depth, wheel)
+  local settings = addon.db.data.settings
+  local scale = settings.wheelScale or 1
+  if depth > 0 then
+    scale = scale * math.min(.86,
+      math.min(wheel.screenWidth / 1280, wheel.screenHeight / 900))
+  end
+  local icon = settings.wheelIconSize * scale
+  local radius = math.max(settings.wheelRadius,
+    count * settings.wheelIconSize * 1.6 / (2 * math.pi)) * scale
+  local fit = math.min(1, math.max(80,
+    math.min(wheel.screenWidth, wheel.screenHeight) / 2 - 78) /
+    (radius + icon * 1.6))
+  radius, icon = radius * fit, icon * fit
+  return radius, math.min(icon, radius * 2 * math.pi / count * .72)
+end
+
+function wheel:ChildCenter(parent, outer)
+  local direction = parent.vector or {1, 0}
+  local distance = parent.outer * .65 + outer + 24
+  local turns = {0, math.pi/4, -math.pi/4, math.pi/2,
+    -math.pi/2, 3*math.pi/4, -3*math.pi/4, math.pi}
+  local bestX, bestY, bestScore
+  for _, turn in ipairs(turns) do
+    local x = parent.x + distance *
+      (direction[1]*math.cos(turn) - direction[2]*math.sin(turn))
+    local y = parent.y + distance *
+      (direction[1]*math.sin(turn) + direction[2]*math.cos(turn))
+    local margin = outer + 64
+    local outside = math.max(0, margin-x, x-(self.screenWidth-margin),
+      margin-y, y-(self.screenHeight-margin))
+    local score = outside * 30 + math.abs(turn) * 35
+    for _, older in ipairs(self.history) do
+      if older ~= parent then
+        local separation = math.sqrt((x-older.x)^2 + (y-older.y)^2)
+        score = score + math.max(0, older.outer*.65 + outer + 16 - separation) * 20
+      end
+    end
+    if not bestScore or score < bestScore then bestX,bestY,bestScore=x,y,score end
+  end
+  return bestX, bestY
+end
+
+function wheel:Enter(menu, index, folder)
+  local parent = {menu=self.submenu, parent=self.submenuParent,
+    folder=self.folderIndex, x=self.centerX, y=self.centerY,
+    radius=self.radius, outer=self.outerRadius, count=self.count,
+    vector=self.vectors[index], entries={}}
+  for i=1,self.count do
+    local entry = entryAt(i)
+    local name, texture = display(entry)
+    local base = type(texture) == "string" and
+      texture:sub(1,#assetRoot) == assetRoot and
+      texture:sub(#assetRoot+1):match("^([%w_]+)%.blp$")
+    local blurred = base and (base:match("^Pack") or
+      base:match("^Class") or base:match("^Service")) and
+      assetRoot .. "Soft" .. base .. ".blp"
+    parent.entries[i] = {name=wheelLabel(name), texture=blurred or texture,
+      color=swatchRGB[entryColor(entry)] or swatchRGB.Slate}
+  end
+  self.history[#self.history+1] = parent
+  self.submenuParent, self.submenu, self.folderIndex = self.submenu, menu, folder
+  local entries = menu == "folder" and
+    addon.db.data.settings.wheelSlots[folder].entries or submenuEntries()
+  local count = #entries + (menu == "folder" and 1 or 0)
+  local radius, icon = outerSize(math.max(1,count), #self.history, self)
+  self.layoutX, self.layoutY = self:ChildCenter(parent, radius + icon*.9)
+  self:Layout(); self:SetSelection(nil)
+  self:RefreshAppearance()
+  animate(self.trim)
+  animate(self.centerArt)
+  for i=1,self.count do animate(self.slots[i].texture) end
+end
+
+function wheel:GoBack()
+  local parent = table.remove(self.history)
+  if not parent then return end
+  self.submenu, self.submenuParent, self.folderIndex =
+    parent.menu, parent.parent, parent.folder
+  self.layoutX, self.layoutY = parent.x, parent.y
+  self:Layout(); self:SetSelection(nil)
+  self:RefreshAppearance()
+  animate(self.trim)
+end
+
+function wheel:BeginCenterDrag()
+  if not addon.db.data.settings.wheelUnlocked or not outOfCombat() then return false end
+  local x, y = cursorPosition()
+  if not x or not y then return false end
+  self.dragCenter = {x=x-self.centerX, y=y-self.centerY}
+  self:Notice("Move wheel; release to save position.")
+  return true
+end
+
+function wheel:EndCenterDrag()
+  local drag = self.dragCenter
+  if not drag then return false end
+  if drag.moved and not self.submenu and self.screenWidth and self.screenHeight then
+    addon.db.data.settings.wheelCenter = {
+      x=self.centerX/self.screenWidth, y=self.centerY/self.screenHeight}
+  end
+  self.dragCenter = nil
+  return drag.moved == true
+end
+
+function wheel:RenderHistory()
+  for depth, parent in ipairs(self.history) do
+    local view = self.historyViews[depth]
+    if not view then
+      view = {icons={}, labels={}, rim=self.frame:CreateTexture(nil,"BORDER"),
+        hub=self.frame:CreateTexture(nil,"ARTWORK"),
+        tag=self.frame:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")}
+      self.historyViews[depth] = view
+    end
+    local extent = parent.outer * .65
+    view.rim:SetTexture(assetRoot .. string.format("WheelTrim%02d.blp", parent.count))
+    view.rim:SetSize(extent*2, extent*2)
+    view.rim:ClearAllPoints()
+    view.rim:SetPoint("CENTER", UIParent, "BOTTOMLEFT", parent.x, parent.y)
+    view.rim:SetAlpha(.35); view.rim:Show()
+    view.hub:SetTexture(assetRoot .. "WheelCenter.blp")
+    view.hub:SetSize(extent*.62, extent*.62)
+    view.hub:ClearAllPoints()
+    view.hub:SetPoint("CENTER", UIParent, "BOTTOMLEFT", parent.x, parent.y)
+    view.hub:SetAlpha(.28); view.hub:Show()
+    view.tag:SetText(parent.menu or "MAIN")
+    view.tag:ClearAllPoints()
+    view.tag:SetPoint("CENTER", UIParent, "BOTTOMLEFT", parent.x, parent.y)
+    view.tag:SetAlpha(.58); view.tag:Show()
+    for i, item in ipairs(parent.entries) do
+      if not view.icons[i] then
+        view.icons[i] = self.frame:CreateTexture(nil,"OVERLAY")
+        view.labels[i] = self.frame:CreateFontString(nil,"OVERLAY","GameFontNormalSmall")
+      end
+      local angle = math.pi/2 - (i-1)*2*math.pi/parent.count
+      local x = parent.x + math.cos(angle)*parent.radius*.65
+      local y = parent.y + math.sin(angle)*parent.radius*.65
+      local image = view.icons[i]
+      image:SetTexture(item.texture)
+      image:SetSize(math.min(28,extent*.32), math.min(28,extent*.32))
+      image:ClearAllPoints()
+      image:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x, y)
+      if type(image.SetDesaturated)=="function" then
+        pcall(image.SetDesaturated,image,true)
+      end
+      image:SetAlpha(.38); image:Show()
+      local label = view.labels[i]
+      label:SetText(item.name)
+      label:ClearAllPoints()
+      label:SetPoint("TOP", image, "BOTTOM", 0, -1)
+      label:SetAlpha(.35)
+      if parent.count <= 6 then label:Show() else label:Hide() end
+    end
+    for i=#parent.entries+1,#view.icons do
+      view.icons[i]:Hide(); view.labels[i]:Hide()
+    end
+    local nextTier = self.history[depth+1]
+    local toX, toY = nextTier and nextTier.x or self.centerX,
+      nextTier and nextTier.y or self.centerY
+    local dx, dy = toX-parent.x, toY-parent.y
+    local distance = math.sqrt(dx*dx+dy*dy)
+    local line = self.layerLinks[depth]
+    if not line then
+      line = self.frame:CreateTexture(nil,"BACKGROUND")
+      line:SetTexture("Interface\\Buttons\\WHITE8X8")
+      line:SetVertexColor(.93,.69,.36)
+      self.layerLinks[depth] = line
+    end
+    local endRadius = nextTier and nextTier.outer*.65 or self.outerRadius
+    if distance < 1 then
+      line:Hide()
+      if self.layerLinksVertical[depth] then self.layerLinksVertical[depth]:Hide() end
+    else
+      local fromX, fromY = parent.x+dx*extent/distance, parent.y+dy*extent/distance
+      local endX, endY = toX-dx*endRadius/distance, toY-dy*endRadius/distance
+      local length = math.max(1, distance-extent-endRadius)
+      line:SetSize(length, 3)
+      line:ClearAllPoints()
+      line:SetPoint("CENTER", UIParent, "BOTTOMLEFT",
+        (fromX+endX)/2, (fromY+endY)/2)
+      line:SetAlpha(.55)
+      local angle = dx == 0 and (dy >= 0 and math.pi/2 or -math.pi/2) or
+        math.atan(dy/dx) + (dx < 0 and math.pi or 0)
+      if type(line.SetRotation)=="function" and pcall(line.SetRotation,line,angle) then
+        line:Show()
+        if self.layerLinksVertical[depth] then self.layerLinksVertical[depth]:Hide() end
+      else
+        -- Rotation may be unavailable: join the tiers with two straight segments.
+        line:SetSize(math.max(1,math.abs(endX-fromX)),3)
+        line:ClearAllPoints()
+        line:SetPoint("CENTER",UIParent,"BOTTOMLEFT",(fromX+endX)/2,fromY)
+        line:Show()
+        local vertical=self.layerLinksVertical[depth]
+        if not vertical then
+          vertical=self.frame:CreateTexture(nil,"BACKGROUND")
+          vertical:SetTexture("Interface\\Buttons\\WHITE8X8")
+          vertical:SetVertexColor(.93,.69,.36)
+          self.layerLinksVertical[depth]=vertical
+        end
+        vertical:SetSize(3,math.max(1,math.abs(endY-fromY)))
+        vertical:ClearAllPoints()
+        vertical:SetPoint("CENTER",UIParent,"BOTTOMLEFT",endX,(fromY+endY)/2)
+        vertical:SetAlpha(.55); vertical:Show()
+      end
+    end
+  end
+  for i=#self.history+1,#self.historyViews do
+    local view=self.historyViews[i]
+    view.rim:Hide(); view.hub:Hide(); view.tag:Hide()
+    for _, image in ipairs(view.icons) do image:Hide() end
+    for _, label in ipairs(view.labels) do label:Hide() end
+  end
+  for i=#self.history+1,#self.layerLinks do self.layerLinks[i]:Hide() end
+  for i=#self.history+1,#self.layerLinksVertical do self.layerLinksVertical[i]:Hide() end
+end
 
 function wheel:Create()
   if self.frame then return end
   local frame = CreateFrame("Frame", "ErrandMasterWheel", UIParent)
-  frame:SetAllPoints(UIParent)
+  frame:SetSize(340, 340) -- Only the wheel intercepts clicks; pinned bags stay usable.
   frame:SetFrameStrata("FULLSCREEN_DIALOG")
   frame:EnableMouse(true)
+  frame:RegisterForDrag("LeftButton")
   frame:RegisterEvent("PLAYER_REGEN_DISABLED")
   frame:SetScript("OnEvent", function() wheel:Close() end)
-  frame:SetScript("OnUpdate", function() wheel:UpdateHighlight() end)
+  frame:SetScript("OnUpdate", function()
+    if wheel.dragCenter then
+      local x, y = cursorPosition()
+      if x and y then
+        local targetX, targetY = x - wheel.dragCenter.x, y - wheel.dragCenter.y
+        if math.abs(targetX-wheel.centerX)>3 or math.abs(targetY-wheel.centerY)>3 then
+          wheel.dragCenter.moved = true
+        end
+        if wheel.submenu then
+          wheel.layoutX, wheel.layoutY = targetX, targetY
+        else
+          wheel.cursorX, wheel.cursorY = targetX, targetY
+        end
+        wheel:Layout()
+        wheel:RefreshAppearance()
+      end
+    end
+    wheel:UpdateHighlight()
+  end)
   frame:SetScript("OnMouseDown", function(_, mouse)
-    if mouse ~= "LeftButton" then wheel:Close(); return end
+    if mouse ~= "LeftButton" and mouse ~= "RightButton" then return end
     wheel:UpdateHighlight()
     local index = wheel.selected
+    local settings = addon.db.data.settings
+    if mouse == "LeftButton" and wheel.submenu and index and
+        entryAt(index) and entryAt(index).category == "Back" then
+      wheel:GoBack()
+      return
+    end
+    if settings.wheelUnlocked then
+      if mouse == "LeftButton" and index and not wheel.submenu then
+        local selectedEntry = entryAt(index)
+        local category = selectedEntry and selectedEntry.type == "category" and
+          selectedEntry.category
+        if category == "Skills" or category == "Items" then
+          wheel:Enter(category, index)
+          return
+        end
+      end
+      if index and index > 0 and not wheel.submenu then
+        wheel.editorIndex = index
+        if mouse == "RightButton" then wheel:ChangeColor(false); wheel:RefreshAppearance()
+        else wheel:Notice("Drag to move, drag out to remove, or drop a bag item.") end
+      end
+      return
+    end
+    if mouse ~= "LeftButton" then return end
     if wheel.activeIndex and not wheel.submenu then
       wheel:Close()
       if index and addon.db:WheelMove(wheel.activeIndex, index) then
@@ -227,34 +743,185 @@ function wheel:Create()
       return
     end
     local entry = index and entryAt(index)
-    local submenu = wheel.submenu
-    wheel:Close()
     if entry then
       if entry.type == "category" then
-        if entry.category == "Vendor" and not submenu then
-          wheel.submenu = "vendor"
-          wheel:Open()
-        elseif entry.category == "Back" then wheel:Open()
-        else wheel:SelectCategory(entry.category) end
+        local category = entry.category
+        if (menus[category] or category == "Skills" or category == "Items") and
+            not wheel.submenu then
+          if category == "Quests" and not addon.quests then
+            wheel:Notice("Active quest locations unavailable."); return
+          end
+          wheel:Enter(category, index)
+          return
+        elseif ((category == "Profession Vendor" or category == "Profession Supplies") and
+            wheel.submenu == "Vendor") or
+            (category == "Profession Trainer" and wheel.submenu == "Trainer") then
+          wheel:Enter(category, index)
+          return
+        elseif category == "Active Quests" and wheel.submenu == "Quests" then
+          wheel.submenu = category
+          local empty = #submenuEntries() == 1
+          wheel.submenu = "Quests"
+          if empty then
+            wheel:Notice("No active quest POIs on this map.")
+            return
+          end
+          wheel:Enter(category, index)
+          return
+        elseif (category == "Waypoint" or category == "Favorites") and
+            wheel.submenu == "Travel" or
+            (category == "Current Favorites" or category == "Remove Favorite") and
+            wheel.submenu == "Favorites" then
+          wheel:Enter(category, index)
+          if wheel.count==1 then wheel:Notice("No open favorites. Add coordinates or mark a target Fav.") end
+          return
+        end
+        if not settings.wheelPinned then wheel:Close() end
+        wheel:SelectCategory(category)
       elseif entry.type == "folder" then
-        wheel.submenu, wheel.folderIndex = "folder", index
-        wheel:Open()
+        wheel:Enter("folder", index, index)
+      elseif entry.type == "quest" then
+        if not settings.wheelPinned then wheel:Close() end
+        local ok, added, reason = pcall(addon.quests.Add, addon.quests, entry.id, entry.mapID)
+        if ok and added then
+          addon:Refresh(); addon:Print("Queued active quest: " .. entry.name .. ".")
+        else addon:Print(type(reason)=="string" and reason or "Quest waypoint unavailable.") end
+      elseif entry.type == "favorite" then
+        if not settings.wheelPinned then wheel:Close() end
+        local ok, selected=pcall(addon.ActivateTarget,addon,entry.id)
+        if ok and selected then
+          if addon.destinations then addon.destinations:Open() end
+          addon:Print("Selected favorite target: " .. entry.name .. ". Route evidence is in Targets.")
+        else addon:Print("Favorite is no longer an open target.") end
+      elseif entry.type == "removeFavorite" then
+        local ok, removed=pcall(addon.travelPoints.RemoveFavorite,addon.travelPoints,entry.id)
+        if ok and removed then
+          addon:Print("Removed "..entry.name.." from Favorites; target retained.")
+          if wheel.frame:IsShown() then wheel:Layout(); wheel:RefreshAppearance() end
+        else addon:Print("Favorite could not be removed.") end
       else
+        if not settings.wheelPinned then wheel:Close() end
         local name = display(entry)
         addon:Print(name .. " selected; not executed." ..
           (entry.type == "addon" and " Open its own settings using that addon's controls." or ""))
       end
+    elseif not settings.wheelPinned then wheel:Close()
     end
   end)
   frame:SetScript("OnKeyDown", function(_, key)
     if key == "ESCAPE" then wheel:Close() end
   end)
-  frame:SetScript("OnHide", function() wheel:RestoreCursor() end)
+  frame:SetScript("OnReceiveDrag", function()
+    if not addon.db.data.settings.wheelUnlocked or wheel.dragIndex then return end
+    local index = wheel:IndexAtCursor()
+    if wheel:DropNative(index) then
+      wheel:Layout(); wheel:RefreshAppearance()
+      wheel:Notice("Added preview; game cursor payload was not consumed.")
+    end
+  end)
+  frame:SetScript("OnDragStart", function()
+    if not addon.db.data.settings.wheelUnlocked or not outOfCombat() then return end
+    wheel.dragIndex = nil
+    local selected = wheel:IndexAtCursor()
+    if wheel.submenu and selected == wheel.count then selected = nil end
+    if not selected then
+      local x, y = cursorPosition()
+      if x and y and (x-wheel.centerX)^2 + (y-wheel.centerY)^2 <
+          (wheel.radius * .43)^2 then wheel:BeginCenterDrag() end
+      return
+    end
+    if wheel.submenu and wheel.submenu ~= "Skills" and wheel.submenu ~= "Items" then return end
+    wheel.dragIndex = selected
+  end)
+  frame:SetScript("OnDragStop", function()
+    if wheel.dragCenter then wheel:EndCenterDrag(); return end
+    local source = wheel.dragIndex
+    wheel.dragIndex = nil
+    if not source or not outOfCombat() then return end
+    local target, outside = wheel:IndexAtCursor(true)
+    local changed
+    if wheel.submenu == "Skills" or wheel.submenu == "Items" then
+      local kind = wheel.submenu == "Skills" and "spell" or "item"
+      if outside then changed = addon.db:WheelCollectionRemove(kind, source)
+      elseif target and target < wheel.count then
+        changed = addon.db:WheelCollectionMove(kind, source, target) end
+    elseif outside then changed = addon.db:WheelRemove(source)
+    elseif target then changed = addon.db:WheelMove(source, target) end
+    if changed then
+      wheel.editorIndex = nil
+      wheel:Layout(); wheel:RefreshAppearance()
+      wheel:Notice(outside and "Removed entry." or "Wheel order changed.")
+    end
+  end)
+  frame:SetScript("OnHide", function()
+    wheel.dragIndex = nil
+    wheel.dragCenter = nil
+    wheel:RestoreCursor()
+  end)
   self.frame = frame
   self.slots = {}
-  local center = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-  center:SetText("×")
+  self.history, self.historyViews, self.layerLinks, self.layerLinksVertical = {}, {}, {}, {}
+  self.trim = frame:CreateTexture(nil, "ARTWORK")
+  self.centerArt = frame:CreateTexture(nil, "ARTWORK")
+  self.centerArt:SetTexture(assetRoot .. "WheelCenter.blp")
+  local center = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  center:SetText("Wheel")
   self.centerLabel = center
+  local centerClose = CreateFrame("Button", nil, frame)
+  centerClose:EnableMouse(true)
+  centerClose:RegisterForDrag("LeftButton")
+  centerClose:SetScript("OnMouseDown", function() wheel.suppressCenterClick=nil end)
+  centerClose:SetScript("OnDragStart", function() wheel:BeginCenterDrag() end)
+  centerClose:SetScript("OnDragStop", function()
+    if wheel:EndCenterDrag() then wheel.suppressCenterClick=true end
+  end)
+  centerClose:SetScript("OnClick", function()
+    if wheel.suppressCenterClick then wheel.suppressCenterClick=nil; return end
+    wheel:Close()
+  end)
+  local closeIcon = centerClose:CreateTexture(nil, "OVERLAY")
+  closeIcon:SetAllPoints(centerClose)
+  closeIcon:SetTexture(assetRoot .. "PackCross.blp")
+  centerClose.icon = closeIcon
+  self.centerClose = centerClose
+  local details = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  details:SetWidth(204); details:SetHeight(92)
+  details:SetJustifyH("LEFT"); details:SetJustifyV("TOP")
+  self.detailText = details
+  local hint = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  hint:SetWidth(204); hint:SetHeight(34)
+  hint:SetJustifyH("LEFT")
+  self.hintText = hint
+  local function tool(label, action)
+    local button = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    button:SetSize(68, 24)
+    button:SetText(label)
+    button:SetScript("OnClick", action)
+    return button
+  end
+  self.lockButton = tool("Unlock", function()
+    if not outOfCombat() then wheel:Notice("Edit the wheel out of combat."); return end
+    local settings = addon.db.data.settings
+    settings.wheelUnlocked = not settings.wheelUnlocked
+    if settings.wheelUnlocked then settings.wheelPinned = true end
+    wheel:RefreshAppearance()
+  end)
+  self.lockIcon = self.lockButton:CreateTexture(nil, "ARTWORK")
+  self.lockIcon:SetSize(17, 17)
+  self.lockIcon:SetPoint("LEFT", self.lockButton, "LEFT", 2, 0)
+  self.pinButton = tool("Pin", function()
+    local settings = addon.db.data.settings
+    settings.wheelPinned = not settings.wheelPinned
+    wheel:RefreshAppearance()
+  end)
+  self.colorButton = tool("Color", function()
+    if not addon.db.data.settings.wheelUnlocked or not wheel.selected or
+        wheel.selected == 0 or wheel.submenu then return end
+    wheel.editorIndex = wheel.selected
+    wheel:ChangeColor(false)
+    wheel:RefreshAppearance()
+  end)
+  self.closeButton = tool("Close", function() wheel:Close() end)
   frame:Hide()
   if UISpecialFrames then table.insert(UISpecialFrames, "ErrandMasterWheel") end
 end
@@ -281,7 +948,43 @@ function wheel:EnsureSlots(count)
   end
 end
 function wheel:SelectCategory(category)
-  if not quickServices[category] or not addon.errands then
+  category = ({["Personal Bank"]="Bank", Food="Food Vendor", Reagents="Reagent Vendor", Ammo="Ammo Vendor",
+    ["General Goods"]="Vendor", Inbox="Mailbox"})[category] or category
+  if category == "Settings" and addon.addonSettings then
+    addon.addonSettings:Open(); return
+  elseif category == "New Errand" then
+    addon.ui:OpenCategory("Custom"); return
+  elseif category == "Saved Errands" and addon.ui and addon.ui.frame then
+    addon.ui:Refresh(); addon.ui.frame:Show(); return
+  elseif category == "Pin" then
+    wheel:Close()
+    if addon.worldMap and type(addon.worldMap.Open)=="function" then
+      local ok, opened=pcall(addon.worldMap.Open,addon.worldMap)
+      if ok and opened then
+        addon.worldMap.pinMode=true
+        addon:Print("Waypoint: left-click the displayed map to place your pin; close the map to cancel.")
+        return
+      end
+    end
+    addon:Print("Map unavailable; could not start waypoint pinning."); return
+  elseif category == "Select Current" then
+    local ok,selected,message=pcall(addon.travelPoints.SelectCurrent,addon.travelPoints)
+    addon:Print(ok and selected and "Selected saved map waypoint; route evidence is in Targets." or
+      (ok and message or "Could not select the saved waypoint.")); return
+  elseif category == "Add Coordinates" then
+    wheel:Close()
+    local ok,opened=pcall(addon.travelPoints.OpenFavoriteForm,addon.travelPoints)
+    if not ok or not opened then addon:Print("Could not open favorite coordinate form.") end
+    return
+  elseif category == "Active Quests" then
+    addon.ui:OpenCategory("Quest"); return
+  elseif category == "Portal" or category == "Boat" then
+    addon:Print(category .. " routes need verified destination data; no route was queued."); return
+  elseif category == "Hearthstone" then
+    addon:Print("Hearthstone use needs an in-client secure action; the wheel does not cast items."); return
+  end
+  if not quickServices[category] and not category:match(" Vendor$") and
+      not category:match(" Trainer$") or not addon.errands then
     addon.ui:OpenCategory(category)
     return
   end
@@ -337,25 +1040,33 @@ end
 function wheel:Layout()
   if not self.frame then return end
   local settings = addon.db.data.settings
-  local count = self.submenu == "vendor" and #vendors or
+  self.menuEntries = self.submenu and self.submenu ~= "folder" and submenuEntries() or nil
+  local count = self.menuEntries and #self.menuEntries or
     self.submenu == "folder" and #(settings.wheelSlots[self.folderIndex].entries)+1 or
     (settings.wheelSlots and #settings.wheelSlots or #categories)
   self:EnsureSlots(count)
-  local scale = settings.wheelScale or 1
-  local iconSize = settings.wheelIconSize * scale
-  local radius = math.max(settings.wheelRadius,
-    count * settings.wheelIconSize * 1.6 / (2 * math.pi)) * scale
-  local maxExtent = math.min(self.screenWidth, self.screenHeight) / 2 - 20
-  local fit = math.min(1, maxExtent / (radius + iconSize * 1.6))
-  radius, iconSize = radius * fit, iconSize * fit
-  iconSize = math.min(iconSize, radius * 2 * math.pi / count * .72)
+  local radius, iconSize = outerSize(count, #self.history, self)
   local outerRadius = radius + iconSize * .9
-  self.centerX = math.max(outerRadius + 12,
-    math.min(self.screenWidth - outerRadius - 12, self.cursorX))
-  self.centerY = math.max(outerRadius + 12,
-    math.min(self.screenHeight - outerRadius - 12, self.cursorY))
+  self.centerX = math.max(outerRadius + 64,
+    math.min(self.screenWidth - outerRadius - 64, self.layoutX or self.cursorX))
+  self.centerY = math.max(outerRadius + 64,
+    math.min(self.screenHeight - outerRadius - 64, self.layoutY or self.cursorY))
+  self.frame:SetSize((outerRadius + 64) * 2, (outerRadius + 64) * 2)
+  self.frame:ClearAllPoints()
+  self.frame:SetPoint("CENTER", UIParent, "BOTTOMLEFT", self.centerX, self.centerY)
   self.radius, self.count = radius, count
   self.outerRadius = outerRadius
+  self.trim:SetTexture(assetRoot .. string.format("WheelTrim%02d.blp", count))
+  self.trim:Show()
+  self.trim:SetSize(outerRadius * 2, outerRadius * 2)
+  self.trim:ClearAllPoints()
+  self.trim:SetPoint("CENTER", UIParent, "BOTTOMLEFT", self.centerX, self.centerY)
+  self.centerArt:SetSize(outerRadius * .63, outerRadius * .63)
+  local theme = palettes[settings.wheelTheme] or palettes.Azure
+  self.centerArt:SetVertexColor(.65 + theme[1]*.35,
+    .65 + theme[2]*.35, .65 + theme[3]*.35)
+  self.centerArt:ClearAllPoints()
+  self.centerArt:SetPoint("CENTER", UIParent, "BOTTOMLEFT", self.centerX, self.centerY)
   self.vectors = {}
   self.previews = {}
   local artSupported = true
@@ -372,32 +1083,49 @@ function wheel:Layout()
   end
   local previewCache={}
   self.centerLabel:ClearAllPoints()
-  self.centerLabel:SetPoint("CENTER", UIParent, "BOTTOMLEFT", self.centerX, self.centerY)
-  self.centerLabel:SetText(self.activeIndex and
-    ("Active #" .. self.activeIndex .. ": choose slot") or "×")
+  self.centerLabel:SetPoint("CENTER", UIParent, "BOTTOMLEFT", self.centerX, self.centerY - 28)
+  self.centerLabel:SetText(addon.db.data.settings.wheelUnlocked and "EDIT" or "WHEEL")
+  self.centerClose:SetSize(math.min(44, outerRadius * .29), math.min(44, outerRadius * .29))
+  self.centerClose:ClearAllPoints()
+  self.centerClose:SetPoint("CENTER", UIParent, "BOTTOMLEFT", self.centerX, self.centerY + 8)
+  local rail = {self.lockButton, self.pinButton, self.colorButton, self.closeButton}
+  for i, button in ipairs(rail) do
+    button:ClearAllPoints()
+    button:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT",
+      self.centerX - 142 + (i-1)*72, self.centerY + outerRadius + 50)
+  end
+  local detailsX = self.centerX + outerRadius + 18
+  if detailsX + 208 > self.screenWidth - 8 then
+    detailsX = self.centerX - outerRadius - 226
+  end
+  self.detailText:ClearAllPoints()
+  self.detailText:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", detailsX,
+    self.centerY + 45)
+  self.hintText:ClearAllPoints()
+  self.hintText:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", detailsX,
+    self.centerY - 50)
   for i = 1, count do
     local slot = self.slots[i]
-    slot.texture:Show(); slot.label:Show(); slot.badge:Show()
+    slot.texture:Show(); slot.badge:Show()
     slot.badge:SetText(self.activeIndex == i and ("A" .. i) or tostring(i))
     slot.badge:SetTextColor(self.activeIndex == i and 1 or .95,
       self.activeIndex == i and .82 or .95, self.activeIndex == i and .25 or .95)
     local entry=entryAt(i)
     local name, texture = display(entry)
-    local kind = entry and entry.type
-    local marker = kind == "folder" and "OPEN FOLDER" or
-      (kind == "spell" or kind == "macro" or kind == "item" or kind == "addon") and
-      "PREVIEW ONLY" or "QUEUE / VIEW"
+
     if map and entry and entry.type=="category" then
       local category=entry.category
       if previewCache[category]==nil then
         previewCache[category]=nearestPreview(category,map,px,py,width,height) or false
       end
       local preview=previewCache[category]
-      if preview then self.previews[i]=preview; name=name.."\n"..preview end
+      if preview then self.previews[i]=preview end
     end
-    slot.label:SetText(count <= 9 and (name .. "\n" .. marker) or name)
-    slot.label:SetWidth(math.max(60, radius * 2 * math.pi / count * .9))
+    slot.label:SetText(wheelLabel(name))
+    slot.label:SetWidth(math.max(34, math.min(88, radius * 2 * math.pi / count * .8)))
+    slot.label:SetHeight(17)
     slot.label:SetJustifyH("CENTER")
+    if count <= 14 then slot.label:Show() else slot.label:Hide() end
     slot.texture:SetTexture(texture)
     local angle = math.pi / 2 - (i - 1) * 2 * math.pi / count
     local vector = {math.cos(angle), math.sin(angle)}
@@ -422,14 +1150,17 @@ function wheel:Layout()
     slot.texture:SetSize(iconSize, iconSize)
     slot.texture:ClearAllPoints()
     slot.texture:SetPoint("CENTER", UIParent, "BOTTOMLEFT",
-      self.centerX + vector[1]*radius, self.centerY + vector[2]*radius)
+      self.centerX + vector[1]*radius*(count <= 3 and .76 or 1),
+      self.centerY + vector[2]*radius*(count <= 3 and .76 or 1))
     slot.label:ClearAllPoints()
-    slot.label:SetPoint("TOP", slot.texture, "BOTTOM", 0, -3)
+    slot.label:SetPoint("TOP", slot.texture, "BOTTOM", 0, -2)
   end
   if not artSupported then
     -- Unknown client texture rotation: keep the usable icon wheel, not piled-up pie art.
     for i = 1, count do self.slots[i].sector:Hide(); self.slots[i].glow:Hide() end
+    self.trim:Hide()
   end
+  self:RenderHistory()
 end
 function wheel:SetSelection(index)
   if self.selected == index then return end
@@ -437,25 +1168,75 @@ function wheel:SetSelection(index)
   for i = 1, self.count or 0 do
     local slot = self.slots[i]
     local color = swatchRGB[entryColor(entryAt(i))] or swatchRGB.Slate
-    local theme = palettes[addon.db.data.settings.wheelTheme] or palettes.Azure
     slot.sector:SetVertexColor(color[1], color[2], color[3])
-    slot.sector:SetAlpha(i == index and .95 or .55)
+    slot.sector:SetAlpha(i == index and .88 or .57)
     slot.glow:SetVertexColor(color[1], color[2], color[3])
-    slot.glow:SetAlpha(i == index and .8 or .22)
+    slot.glow:SetAlpha(i == index and .85 or .025)
     if i == index then
       slot.texture:SetVertexColor(1, 1, 1)
       slot.texture:SetAlpha(1)
-      slot.label:SetTextColor(color[1], color[2], color[3])
+      slot.label:SetTextColor(.98, .94, .84)
     else
-      slot.texture:SetVertexColor(theme[1], theme[2], theme[3])
-      slot.texture:SetAlpha(.8)
-      slot.label:SetTextColor(.8, .8, .8)
+      slot.texture:SetVertexColor(1, 1, 1)
+      slot.texture:SetAlpha(.92)
+      slot.label:SetTextColor(.78, .82, .85)
     end
   end
   self.centerLabel:SetText(index and index > 0 and
-    (display(entryAt(index)) .. (self.previews and self.previews[index] and
-      "\n" .. self.previews[index] or "")) or
-    (self.activeIndex and "Move active entry" or "×"))
+    string.format("%d / %d", index, self.count) or
+    (addon.db.data.settings.wheelUnlocked and "EDIT" or "WHEEL"))
+  local entry = index and index > 0 and entryAt(index)
+  local name = entry and display(entry)
+  if name then name = name:gsub("|", "/"):gsub("[%c]", " ") end
+  local location=entry and entry.mapID and entry.x and entry.y and
+    string.format("\nMap %d: %.1f, %.1f",entry.mapID,entry.x*100,entry.y*100) or ""
+  local action=entry and ((entry.type=="favorite" and "Click to activate target") or
+    (entry.type=="removeFavorite" and "Click to unstar; target retained") or
+    (entry.type=="category" and ({Back="Return one tier",Pin="Open map, then click to pin",
+      ["Select Current"]="Activate the saved map point",
+      ["Add Coordinates"]="Enter Name; map ID; X; Y"})[entry.category]) or
+    (entry.type=="folder" and "Open folder") or
+    (entry.type=="category" and "Click to queue") or "Preview only")
+  self.detailText:SetText(name and (name .. location ..
+    (self.previews[index] and "\n" .. self.previews[index] or "") ..
+    "\n" .. (addon.db.data.settings.wheelUnlocked and
+      ("Color: " .. entryColor(entry) .. "   •   Preview only") or
+      action)) or
+    (addon.db.data.settings.wheelUnlocked and
+      "EDIT WHEEL\nDrag center to move; drag slots to reorder. Drop bag items." or
+      "Choose a service\nTomTom follows the active target."))
+end
+function wheel:IndexAtCursor(allowOutside)
+  local x, y = cursorPosition()
+  if not x or not self.centerX or not self.radius then return end
+  local dx, dy = x-self.centerX, y-self.centerY
+  local distance = dx*dx + dy*dy
+  if distance > (self.outerRadius + 26)^2 then return nil, allowOutside and true end
+  if distance < (self.radius * .43)^2 then return end
+  local best, score = nil, -math.huge
+  for i, vector in ipairs(self.vectors or {}) do
+    local dot = dx*vector[1] + dy*vector[2]
+    if dot > score then best, score = i, dot end
+  end
+  return best
+end
+function wheel:RefreshAppearance()
+  if not self.frame then return end
+  local settings = addon.db.data.settings
+  self.lockButton:SetText(settings.wheelUnlocked and "Lock" or "Edit")
+  self.lockIcon:SetTexture(assetRoot .. (settings.wheelUnlocked and
+    "PackPadlockLocked.blp" or "PackPadlockUnlocked.blp"))
+  self.centerClose:Show()
+  self.pinButton:SetText(settings.wheelPinned and "Unpin" or "Pin")
+  if settings.wheelUnlocked then self.colorButton:Show()
+  else self.colorButton:Hide() end
+  self.hintText:SetText(settings.wheelUnlocked and
+    "Drag center: move   Right-click: color\nDrag out: remove   Drop bag item: add preview" or
+    (settings.wheelPinned and "Pinned: click to queue; Esc closes" or
+      "Click to queue    Unlock to edit"))
+  local selected = self.selected
+  self.selected = 0
+  self:SetSelection(selected)
 end
 function wheel:UpdateHighlight()
   if not self.frame or not self.frame:IsShown() then return end
@@ -484,8 +1265,14 @@ end
 function wheel:Close()
   if self.frame and self.frame:IsShown() then self.frame:Hide() end
   self:RestoreCursor()
+  self.suppressCenterClick = nil
+  self.history = {}
+  if self.historyViews then self:RenderHistory() end
+  self.layoutX, self.layoutY = nil, nil
   self.selected = nil
   self.submenu = nil
+  self.submenuParent = nil
+  self.menuEntries = nil
   self.folderIndex = nil
 end
 function wheel:Open()
@@ -495,21 +1282,26 @@ function wheel:Open()
   local x, y, width, height = cursorPosition()
   if not x then return false end
   self.cursorX, self.cursorY = x, y
+  self.layoutX, self.layoutY = nil, nil
   self.screenWidth, self.screenHeight = width, height
+  local saved = addon.db.data.settings.wheelCenter
+  if saved then
+    self.cursorX, self.cursorY = saved.x * width, saved.y * height
+  end
   self:Layout()
   self:SetSelection(0) -- Force an initial unselected render.
   self:SetSelection(nil)
+  self:RefreshAppearance()
   self.frame:Show()
   animate(self.frame)
-  if type(SetCursor) == "function" then
-    local ok, result = pcall(SetCursor, CURSOR)
-    self.cursorAttempted = ok and result ~= false
-  end
   return true
 end
 
 function wheel:Notice(message)
   if self.status then self.status:SetText(message) end
+  if self.frame and self.frame:IsShown() and self.hintText then
+    self.hintText:SetText(message)
+  end
 end
 function wheel:AssignSlot()
   if not outOfCombat() then self:Notice("Change wheel slots out of combat."); return false end
@@ -571,9 +1363,29 @@ function wheel:BindingText()
   if not ok or (key and not usable(key)) then return "Key: unavailable (use WoW Key Bindings)" end
   return "Key: " .. (key or "not set")
 end
+function wheel:EnsureCapture()
+  if self.capture then return true end
+  if type(CreateFrame) ~= "function" then return false end
+  local ok, frame = pcall(CreateFrame, "Frame", nil, UIParent)
+  if not ok or not frame then return false end
+  local ready = pcall(function()
+    frame:SetAllPoints(UIParent)
+    frame:SetFrameStrata("FULLSCREEN_DIALOG")
+    frame:EnableKeyboard(false)
+    frame:EnableMouse(false)
+    frame:SetScript("OnKeyDown", function(_, key) wheel:BindKey(key) end)
+    frame:SetScript("OnMouseDown", function(_, button) wheel:BindMouse(button) end)
+    frame:Hide()
+  end)
+  if not ready then return false end
+  self.capture = frame
+  return true
+end
 function wheel:StartCapture()
-  if not outOfCombat() then self:Notice("Change bindings out of combat."); return end
-  if not self.capture then return end
+  if not outOfCombat() then self:Notice("Change bindings out of combat."); return false end
+  if not self:EnsureCapture() then
+    self:Notice("Key capture unavailable; use WoW Key Bindings."); return false
+  end
   local ok = pcall(function()
     self.capture:EnableKeyboard(true)
     self.capture:EnableMouse(true)
@@ -582,10 +1394,11 @@ function wheel:StartCapture()
   if not ok then
     self:StopCapture()
     self:Notice("Key capture unavailable; use WoW Key Bindings.")
-    return
+    return false
   end
   self.capture:Show()
   self:Notice("Press a free key or mouse button; Escape cancels.")
+  return true
 end
 function wheel:BindMouse(button)
   if not usable(button) or type(button) ~= "string" then return end
@@ -790,6 +1603,19 @@ function wheel:ChangeColor(reset)
 end
 function wheel:DropEntry(entry, target, hovered)
   if not outOfCombat() then self:Notice("Edit the wheel out of combat."); return false end
+  if self.submenu and self.submenu ~= "folder" then
+    if self.submenu ~= "Skills" and self.submenu ~= "Items" then
+      self:Notice("Drop onto the top wheel or into Skills / Items."); return false
+    end
+    local kind = self.submenu == "Skills" and "spell" or "item"
+    if addon.db:WheelCollectionAdd(kind, entry) then
+      self:Layout(); self:RefreshAppearance()
+      self:Notice("Added to " .. self.submenu .. "; preview only.")
+      return true
+    end
+    self:Notice("Drop a " .. kind .. " into " .. self.submenu .. " (up to 23).")
+    return false
+  end
   local slots = addon.db.data.settings.wheelSlots
   if target and not slots[target] then return false end
   local db = addon.db
@@ -1114,13 +1940,7 @@ function wheel:ShowSettings()
       child.childIndex = i
       self.folderRows[i] = child
     end
-    self.capture = CreateFrame("Frame", nil, frame)
-    self.capture:SetAllPoints(frame)
-    self.capture:EnableKeyboard(false)
-    self.capture:EnableMouse(false)
-    self.capture:SetScript("OnKeyDown", function(_, key) wheel:BindKey(key) end)
-    self.capture:SetScript("OnMouseDown", function(_, button) wheel:BindMouse(button) end)
-    self.capture:Hide()
+    self:EnsureCapture()
     frame:Hide()
     if UISpecialFrames then table.insert(UISpecialFrames, "ErrandMasterWheelSettings") end
   end

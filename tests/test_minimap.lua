@@ -1,8 +1,9 @@
 -- Lua 5.1 standalone minimap-button contract; run via lupa.lua51 or lua5.1.
-local addon = {db={data={settings={}}}, radial={}, destinations={}}
-local opened, listed = 0, 0
-function addon.radial:ShowSettings() opened = opened + 1 end
+local addon = {db={data={settings={}}}, radial={}, destinations={}, addonSettings={}}
+local opened, listed, configured = 0, 0, 0
+function addon.radial:Open() opened = opened + 1 end
 function addon.destinations:Toggle() listed = listed + 1 end
+function addon.addonSettings:Open() configured = configured + 1 end
 local frames = {}
 local function frame(parent)
   local f = {parent=parent, scripts={}, x=500, y=500, width=140, height=140}
@@ -20,6 +21,7 @@ local function frame(parent)
     local t={}
     function t:SetAllPoints(point) self.all=point end
     function t:SetTexture(path) self.path=path end
+    self.icon=t
     return t
   end
   return f
@@ -38,10 +40,15 @@ source('ErrandMaster', addon)
 assert(addon.minimap:Attach()==true, 'button attaches after initialization')
 local button=addon.minimap.button
 assert(button and button.parent==Minimap and button.kind=='Button', 'own minimap child')
-assert(button.clicks[1]=='LeftButtonUp' and button.clicks[2]=='RightButtonUp')
+assert(button.icon.path:find('Textures\\PackLogo.blp',1,true),
+  'the minimap button uses the cropped user-supplied compass')
+assert(button.clicks[1]=='LeftButtonUp' and button.clicks[2]=='RightButtonUp' and
+  button.clicks[3]=='MiddleButtonUp')
 button.scripts.OnClick(button,'LeftButton')
 button.scripts.OnClick(button,'RightButton')
-assert(opened==1 and listed==1, 'left opens settings; right toggles destinations')
+button.scripts.OnClick(button,'MiddleButton')
+assert(opened==1 and listed==1 and configured==1,
+  'left opens wheel, right toggles targets, middle opens addon settings')
 assert(addon.minimap:Attach()==true and addon.minimap.button==button and #frames==1,
   'attachment is idempotent and leaves other minimap children alone')
 -- Drag around the rim, save a plain finite angle, and suppress the release click.
@@ -55,7 +62,7 @@ button.scripts.OnDragStop(button)
 assert(type(settings.minimapAngle)=='number' and settings.minimapAngle==90,
   'drag persists a finite angle into settings')
 button.scripts.OnClick(button,'LeftButton')
-assert(opened==1, 'drag release is not a settings click')
+assert(opened==1, 'drag release is not a wheel click')
 button.scripts.OnMouseDown(button,'LeftButton')
 button.scripts.OnClick(button,'LeftButton')
 assert(opened==2, 'next ordinary click still works')

@@ -77,7 +77,7 @@ function overlay:OnMapInsetMouseEnter() end
 function overlay:OnMapInsetMouseLeave() end
 function overlay:OnGlobalAlphaChanged() end
 function overlay:OnShow() self:Refresh() end
-function overlay:OnHide() end
+function overlay:OnHide() self.pinMode=nil end
 function overlay:SignalEvent() end
 
 local function newPin(canvas)
@@ -162,7 +162,9 @@ local function addPin(self, canvas, index, entry, kind, width, height, routeNumb
   pin.canvas = canvas
   pin:ClearAllPoints()
   pin:SetPoint("CENTER", canvas, "TOPLEFT", x * width, -y * height)
-  if kind == "service" then pin.icon:SetColorTexture(.2, .75, 1, .9)
+  if category == "Waypoint" then
+    pin.icon:SetTexture("Interface\\AddOns\\ErrandMaster\\Textures\\PackWaypoint.blp")
+  elseif kind == "service" then pin.icon:SetColorTexture(.2, .75, 1, .9)
   elseif kind == "npc" then pin.icon:SetColorTexture(.14, .88, .78, .9)
   elseif kind == "unknown" then pin.icon:SetColorTexture(.6, .6, .6, .9)
   elseif available(status) and status == "partial-route" then
@@ -174,7 +176,7 @@ local function addPin(self, canvas, index, entry, kind, width, height, routeNumb
     kind == "npc" and ("N" .. routeNumber) or
     (available(status) and status == "partial-route" and
       ("P" .. routeNumber) or tostring(routeNumber)))
-  local existing = coincidentIcon(self, canvas, x, y, width, height)
+  local existing = category ~= "Waypoint" and coincidentIcon(self, canvas, x, y, width, height)
   pin.number:ClearAllPoints()
   if existing then
     pin.icon:Hide()
@@ -328,11 +330,31 @@ function overlay:Refresh()
   self.currentMapID = id
   self.pins = self.pins or {}
   local used = 0
+  local waypoint,waypointID,waypointShown
+  if addon.travelPoints and callable(addon.travelPoints,"CurrentWaypoint") then
+    local ok,point=pcall(addon.travelPoints.CurrentWaypoint,addon.travelPoints)
+    if ok and available(point) and type(point)=="table" then
+      local valid,pid,pointMap=pcall(function() return point.id,point.mapID end)
+      if valid and available(pid) and mapID(pointMap) and pointMap==id then
+        waypoint,waypointID=point,pid
+      end
+    end
+  end
+  local function isWaypoint(entry)
+    if not waypoint then return false end
+    local ok,pid=pcall(function()
+      local item=entry.item or entry.errand or entry
+      return item.id
+    end)
+    return ok and available(pid) and pid==waypointID
+  end
   if callable(addon, "Plan") then
     local planned, entries, deferred = pcall(addon.Plan, addon, self.currentMapID)
     if planned and type(entries) == "table" and available(entries) then
       for routeNumber, entry in ipairs(entries) do
-        used = addPin(self, canvas, used, entry, "route", width, height, routeNumber)
+        local nextUsed=addPin(self, canvas, used, entry, "route", width, height, routeNumber)
+        if nextUsed>used and isWaypoint(entry) then waypointShown=true end
+        used=nextUsed
       end
     end
     if planned and type(deferred) == "table" and available(deferred) then
@@ -344,6 +366,7 @@ function overlay:Refresh()
             local nextUsed = addPin(self, canvas, used, entry, "unknown", width, height,
               "U" .. (unknown + 1))
             if nextUsed > used then unknown = unknown + 1 end
+            if nextUsed>used and isWaypoint(entry) then waypointShown=true end
             used = nextUsed
           end
         end
@@ -387,6 +410,9 @@ function overlay:Refresh()
       end
     end
   end
+  if waypoint and not waypointShown then
+    used=addPin(self,canvas,used,waypoint,"waypoint",width,height,"W")
+  end
   for i = used+1, #self.pins do self.pins[i]:Hide() end
   updateQuests(self, map)
   return true
@@ -394,9 +420,23 @@ end
 
 function overlay:OnCanvasClick(map, button, x, y)
   if map ~= self.map or button ~= "LeftButton" or inCombat() or
-    not normalized(x) or not normalized(y) or
-    not addon.errands or not callable(addon.errands, "Add") or
-    type(IsShiftKeyDown) ~= "function" then return false end
+    not normalized(x) or not normalized(y) then return false end
+  if self.pinMode then
+    local ok,id=pcall(map.GetMapID,map)
+    if not ok or not mapID(id) or not addon.travelPoints or
+        not callable(addon.travelPoints,"Pin") then return false end
+    local placed,point=pcall(addon.travelPoints.Pin,addon.travelPoints,id,x,y)
+    if not placed or not point then
+      if callable(addon,"Print") then addon:Print("Could not place waypoint. Try another map point.") end
+      return false
+    end
+    self.pinMode=nil
+    self:Refresh()
+    if callable(addon,"Print") then addon:Print("Waypoint pinned on the displayed map. Select Current under Travel to make it active.") end
+    return true
+  end
+  if not addon.errands or not callable(addon.errands, "Add") or
+      type(IsShiftKeyDown) ~= "function" then return false end
   local shifted, isDown = pcall(IsShiftKeyDown)
   if not shifted or not available(isDown) or isDown ~= true then return false end
   local ok, id = pcall(function() return map:GetMapID() end)

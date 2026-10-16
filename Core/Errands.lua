@@ -4,7 +4,8 @@ local errands = addon.errands
 local db = addon.db
 local MAX_ERRANDS = 200
 local fields = {name=true, description=true, category=true, priority=true, mapID=true,
-  x=true, y=true, npcID=true, target=true, origin=true, scope=true, questID=true}
+  x=true, y=true, npcID=true, target=true, origin=true, scope=true, questID=true,
+  favorite=true}
 local function coordinate(n)
   return type(n) == "number" and n == n and n >= 0 and n <= 1
 end
@@ -15,6 +16,7 @@ local function validate(item)
   assert(type(item.name) == "string" and item.name:match("%S") and #item.name <= 80, "name must be 1-80 characters")
   assert(item.scope == "account" or item.scope == "character", "invalid scope")
   assert(item.description == nil or (type(item.description) == "string" and #item.description <= 500), "invalid description")
+  assert(item.favorite == nil or type(item.favorite) == "boolean", "invalid favorite")
   assert(item.category == nil or (type(item.category) == "string" and #item.category <= 40), "invalid category")
   assert(item.priority == nil or (positiveInteger(item.priority) and item.priority <= 5), "priority must be 1-5")
   assert(item.origin == "manual" or item.origin == "suggested", "invalid origin")

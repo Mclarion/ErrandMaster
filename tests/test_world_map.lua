@@ -14,6 +14,7 @@ local function frame(parent)
   function result:IsShown() return self.shown end
   function result:SetScript(name, fn) self.scripts[name]=fn end
   function result:SetText(text) self.text=text end
+  function result:SetTexture(texture) self.texture=texture end
   function result:CreateTexture() local child=frame(self); function child:SetColorTexture(...) self.color={...} end; return child end
   function result:CreateFontString() return frame(self) end
   return result
@@ -121,6 +122,35 @@ map.mapID=42; addon.worldMap:Refresh()
 local shift=false
 IsShiftKeyDown = function() return shift end
 assert(map.clicks[1](map,'LeftButton',.35,.6) == false and #adds==0)
+local marked,notices
+addon.Print=function(_,message) notices=message end
+addon.travelPoints={Pin=function(_,id,x,y)
+  marked={mapID=id,x=x,y=y,category='Waypoint',name='Map waypoint'}
+  return marked
+end}
+addon.worldMap.pinMode=true
+assert(map.clicks[1](map,'LeftButton',1.1,.6)==false and addon.worldMap.pinMode)
+assert(map.clicks[1](map,'LeftButton',.35,.6)==true and not addon.worldMap.pinMode and
+  marked.mapID==42 and marked.x==.35 and marked.y==.6 and #adds==0,
+  'plain map click pins the player-owned waypoint when Pin mode is active')
+route[1].category='Waypoint'
+addon.worldMap:Refresh()
+assert(pins[1].icon.texture:find('PackWaypoint.blp',1,true),
+  'owned waypoint uses the supplied map icon instead of a generic square')
+route[1].category=nil
+marked.id='em-8'
+addon.travelPoints.CurrentWaypoint=function() return marked end
+addon.worldMap:Refresh()
+assert(pins[4].shown and pins[4].icon.texture:find('PackWaypoint.blp',1,true),
+  'waypoint stays visible on its map even without an observed route')
+addon.travelPoints.CurrentWaypoint=function() return nil end
+addon.worldMap.pinMode=true
+addon.travelPoints.Pin=function() error('invalid pin storage') end
+assert(map.clicks[1](map,'LeftButton',.4,.5)==false and addon.worldMap.pinMode and
+  notices:find('Could not place waypoint',1,true),
+  'storage errors do not escape the map click handler or lose Pin mode')
+addon.worldMap:OnHide()
+assert(not addon.worldMap.pinMode, 'closing the map cancels a pending pin')
 shift=true
 assert(map.clicks[1](map,'RightButton',.35,.6) == false and #adds==0)
 for _, pair in ipairs({{nil,.2},{-.1,.2},{1.1,.2},{.2,0/0},{.2,math.huge}}) do

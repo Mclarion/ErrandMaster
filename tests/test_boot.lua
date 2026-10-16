@@ -90,17 +90,27 @@ assert(ErrandMaster_OpenWheel())
 mouseY = 650
 addon.radial.frame.scripts.OnUpdate(addon.radial.frame)
 addon.radial.frame.scripts.OnMouseDown(addon.radial.frame, "LeftButton")
-assert(#addon.errands:All() == 1 and addon.errands:All()[1].category == "Repair")
+assert(addon.radial.submenu == "Bank")
+mouseX, mouseY = addon.radial.centerX, addon.radial.centerY + addon.radial.radius
+addon.radial.frame.scripts.OnUpdate(addon.radial.frame)
+addon.radial.frame.scripts.OnMouseDown(addon.radial.frame, "LeftButton")
+assert(#addon.errands:All() == 1 and addon.errands:All()[1].category == "Bank")
 assert(addon.errands:All()[1].origin == "suggested")
 addon.errands:Delete(addon.errands:All()[1].id)
 SlashCmdList.ERRANDMASTER("wheel settings")
-assert(addon.radial.settingsFrame:IsShown() and addon.radial.bindButton)
+assert(addon.addonSettings.frame:IsShown() and addon.addonSettings.bind,
+  'wheel settings opens compact AddOns settings, not the old studio')
+assert(addon.radial.capture == nil)
+addon.addonSettings.bind.scripts.OnClick(addon.addonSettings.bind)
+assert(addon.radial.capture and addon.radial.capture:IsShown(),
+  'Bind wheel in AddOns settings activates capture without the old studio')
+addon.radial.capture.scripts.OnKeyDown(addon.radial.capture, 'ESCAPE')
+assert(not addon.radial.capture:IsShown())
 local savedWindowKeys, originalSave = {}, addon.windowPosition.Save
 addon.windowPosition.Save=function(_, _, key)
   savedWindowKeys[#savedWindowKeys+1]=key; return true
 end
-for _, target in ipairs({{addon.ui.frame,'main'},
-    {addon.radial.settingsFrame,'wheelSettings'}}) do
+for _, target in ipairs({{addon.ui.frame,'main'}}) do
   target[1].scripts.OnDragStart(target[1])
   target[1].scripts.OnHide(target[1])
   assert(savedWindowKeys[#savedWindowKeys]==target[2] and
@@ -322,6 +332,102 @@ assert(addon.navigation.handle=='retry-em' and
 addon.navigation.provider={RemoveWaypoint=function() removed=removed+1 end}
 assert(addon.navigation:Clear() and removed==5)
 addon.Plan=originalPlan
+-- Active targets follow an owned TomTom arrow; unknown walking stays explicit.
+local selected=addon.errands:Add({name='Bank interaction',category='Bank',
+  mapID=10,x=.2,y=.3,origin='suggested',scope='character'})
+local originalRefresh, originalMapSize = addon.Refresh, C_Map.GetMapWorldSize
+local oldTomTom = TomTom
+local added, cleared, title = 0, 0
+TomTom={AddWaypoint=function(_, map, x, y, options)
+    assert(map==10 and x==.2 and y==.3 and options.crazy)
+    added=added+1; title=options.title; return 'active-target'
+  end,
+  RemoveWaypoint=function(_, handle)
+    assert(handle=='active-target'); cleared=cleared+1; return true
+  end}
+addon.Plan=function() return {{id=selected.id,name=selected.name,category='Bank',
+  mapID=10,x=.2,y=.3,walkStatus='unknown-route'}},{} end
+addon.Refresh=function(self) self:RevalidateNavigation() end
+assert(addon.navigation.paused, 'Clear pin must remain cleared across refreshes')
+addon:RevalidateNavigation()
+assert(added==0 and addon.navigation.handle==nil)
+assert(addon:ActivateTarget(selected.id) and added==1 and
+  title:find('walking path unverified',1,true) and
+  addon.navigation.handle=='active-target', 'activation resumes a direct, labeled arrow')
+addon:RevalidateNavigation()
+assert(added==1, 'periodic refresh does not duplicate the owned waypoint')
+assert(not addon:FinishTargetOnInteraction('MAIL_SHOW') and not selected.completed)
+C_Map.GetMapWorldSize=function() return 1000,1000 end
+assert(addon:FinishTargetOnInteraction('BANKFRAME_OPENED') and selected.completed)
+assert(addon.db.data.characters[addon.db.character].activeErrandId==nil and
+  cleared==1 and addon.navigation.handle==nil,
+  'interacting at the matched bank marks it done and advances the arrow')
+addon.errands:Delete(selected.id) -- Keep the original NPC and pin fixture counts unchanged.
+local probe=addon.errands:Add({name='No TomTom available', category='Bank',
+  mapID=10, x=.2, y=.3, scope='character'})
+addon.Plan=function() return {{id=probe.id, name=probe.name, category='Bank',
+  mapID=10, x=.2, y=.3, walkStatus='unknown-route'}},{} end
+local previousNext, previousPrint=addon.navigation.Next, addon.Print
+local notices={}
+addon.navigation.Next=function() return false end
+addon.Print=function(_, text) notices[#notices+1]=text end
+addon:NavigateNext()
+assert(not table.concat(notices,' '):find('TomTom points directly',1,true),
+  'missing TomTom must not be described as an active arrow')
+addon.navigation.Next, addon.Print=previousNext, previousPrint
+addon.errands:Delete(probe.id)
+local unlocated=addon.errands:Add({name='Unlocated bank', category='Bank',
+  origin='suggested', scope='character'})
+addon.Plan=function() return {{id=unlocated.id, name=unlocated.name,
+  category='Bank'}},{} end
+assert(addon:ActivateTarget(unlocated.id))
+assert(not addon:FinishTargetOnInteraction('BANKFRAME_OPENED') and
+  not unlocated.completed, 'service type alone cannot prove an unlocated target was reached')
+addon.errands:Delete(unlocated.id)
+addon.db.data.characters[addon.db.character].activeErrandId=nil
+local resolved=addon.errands:Add({name='Resolved banker', category='Bank',
+  origin='suggested', scope='character'})
+addon.Plan=function() return {{id=resolved.id, name=resolved.name, category='Bank',
+  npcID=501, mapID=10, x=.2, y=.3}},{} end
+local oldUnitGUID=UnitGUID
+UnitGUID=function() return 'Creature-0-0-0-0-502-00000001' end
+assert(addon:ActivateTarget(resolved.id))
+assert(not addon:FinishTargetOnInteraction('BANKFRAME_OPENED') and
+  not resolved.completed, 'resolved NPC identity must reject a different banker at same spot')
+UnitGUID=function() return nil end
+assert(not addon:FinishTargetOnInteraction('BANKFRAME_OPENED') and
+  not resolved.completed, 'missing NPC identity cannot be replaced by map proximity')
+UnitGUID=function() return 'Creature-0-0-0-0-501-00000001' end
+assert(addon:FinishTargetOnInteraction('BANKFRAME_OPENED') and resolved.completed,
+  'matching service interaction and resolved NPC identity complete the target')
+UnitGUID=oldUnitGUID
+addon.errands:Delete(resolved.id)
+addon.db.data.characters[addon.db.character].activeErrandId=nil
+local service=addon.errands:Add({name='Service-only banker', category='Bank',
+  npcID=501, mapID=10, x=.2, y=.3, scope='character'})
+addon.Plan=function() return {{id=service.id, name=service.name,
+  category='Bank', npcID=501, mapID=10, x=.2, y=.3}},{} end
+UnitGUID=function() return 'Creature-0-0-0-0-501-00000001' end
+assert(addon:ActivateTarget(service.id))
+assert(not addon:FinishTargetOnInteraction('GOSSIP_SHOW') and not service.completed,
+  'speaking to a banker alone does not prove bank service was opened')
+UnitGUID=oldUnitGUID
+addon.errands:Delete(service.id)
+addon.db.data.characters[addon.db.character].activeErrandId=nil
+local visit=addon.errands:Add({name='Visit banker', category='NPC Visit',
+  npcID=501, scope='character'})
+addon.Plan=function() return {},{{id=visit.id, name=visit.name,
+  category='NPC Visit', npcID=501}} end
+assert(addon:ActivateTarget(visit.id))
+assert(not addon:FinishTargetOnInteraction('GOSSIP_SHOW') and not visit.completed,
+  'an NPC visit still requires the correct NPC identity')
+UnitGUID=function() return 'Creature-0-0-0-0-501-00000001' end
+assert(addon:FinishTargetOnInteraction('GOSSIP_SHOW') and visit.completed,
+  'explicit NPC Visit completes when speaking to the matched NPC')
+UnitGUID=oldUnitGUID
+addon.errands:Delete(visit.id)
+addon.Plan=originalPlan; addon.Refresh=originalRefresh
+C_Map.GetMapWorldSize=originalMapSize; TomTom=oldTomTom
 SlashCmdList.ERRANDMASTER("walking off")
 SlashCmdList.ERRANDMASTER("npcs bank")
 assert(messages[#messages-2]:find('Test Banker',1,true) and

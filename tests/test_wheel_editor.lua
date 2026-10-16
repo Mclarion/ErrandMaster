@@ -54,6 +54,13 @@ UseItemByName=function() error('must not use item') end
 assert(loadfile('Core/Database.lua'))('ErrandMaster',addon)
 ErrandMasterDB=nil
 addon.db:Initialize('Wheel-Realm')
+-- Preserve an older seven-slot account layout while exercising the editor.
+local existing = {'Repair','Bank','Auction House','Mailbox','Vendor',
+  'Class Trainer','Custom'}
+addon.db.data.settings.wheelSlots={}
+for i,name in ipairs(existing) do
+  addon.db.data.settings.wheelSlots[i]={type='category',category=name}
+end
 assert(loadfile('UI/RadialMenu.lua'))('ErrandMaster',addon)
 local wheel=addon.radial
 wheel:ShowSettings()
@@ -131,7 +138,7 @@ assert(addon.db.data.settings.wheelSlots[1].name=='Travel' and
 wheel.editorRows[1].scripts.OnClick(wheel.editorRows[1])
 assert(wheel.folderRows[1].shown)
 click('Next color')
-assert(addon.db.data.settings.wheelCategoryColors.Folder=='Teal')
+assert(addon.db.data.settings.wheelCategoryColors.Folder=='Gold')
 click('Reset color')
 assert(addon.db.data.settings.wheelCategoryColors.Folder==nil)
 x,y=960,540
@@ -158,6 +165,68 @@ wheel.editorRows[2].scripts.OnDragStart(wheel.editorRows[2])
 local trash=button('Drag here to REMOVE')
 trash.scripts.OnReceiveDrag(trash)
 assert(#addon.db.data.settings.wheelSlots==count-1)
+-- The wheel itself is a local, pinnable drop target, not a full-screen modal.
+x,y=960,540
+assert(wheel:Open())
+assert(wheel.frame.w<UIParent.w and wheel.frame.h<UIParent.h,
+  'pinned wheel cannot cover bags with an invisible full-screen mouse blocker')
+wheel.lockButton.scripts.OnClick(wheel.lockButton)
+assert(addon.db.data.settings.wheelUnlocked and addon.db.data.settings.wheelPinned and
+  wheel.frame.shown, 'unlocking pins an editable wheel open for bag drags')
+-- Center dragging moves the entire wheel and restores that position next time.
+x,y=wheel.centerX,wheel.centerY
+wheel.frame.scripts.OnDragStart(wheel.frame)
+assert(wheel.dragCenter and not wheel.dragIndex)
+x,y=x+140,y+50
+wheel.frame.scripts.OnUpdate(wheel.frame)
+wheel.frame.scripts.OnDragStop(wheel.frame)
+local savedCenter=addon.db.data.settings.wheelCenter
+assert(savedCenter and math.abs(savedCenter.x*UIParent.w-wheel.centerX)<1 and
+  math.abs(savedCenter.y*UIParent.h-wheel.centerY)<1,
+  'center drag persists normalized wheel location')
+wheel:Close()
+x,y=150,200
+assert(wheel:Open() and math.abs(wheel.centerX-savedCenter.x*UIParent.w)<1,
+  'opening again restores wheel location instead of covering the bag cursor')
+count=#addon.db.data.settings.wheelSlots
+droppedKind,droppedID='item',777
+x,y=wheel.centerX,wheel.centerY+wheel.radius
+wheel.frame.scripts.OnReceiveDrag(wheel.frame)
+assert(#addon.db.data.settings.wheelSlots==count+1 and
+  addon.db.data.settings.wheelSlots[1].id==4444,
+  'native bag cursor inserts at hovered wheel slot without consuming item')
+wheel.frame.scripts.OnDragStop(wheel.frame)
+assert(#addon.db.data.settings.wheelSlots==count+1,
+  'native cursor drop cannot also trigger a wheel move')
+droppedKind,droppedID=nil,nil -- Player put the cursor item back in their bag.
+local first=addon.db.data.settings.wheelSlots[1]
+x,y=wheel.centerX,wheel.centerY+wheel.radius
+wheel.frame.scripts.OnDragStart(wheel.frame)
+x,y=wheel.centerX+wheel.radius,wheel.centerY
+local dragTarget=wheel:IndexAtCursor()
+wheel.frame.scripts.OnDragStop(wheel.frame)
+assert(dragTarget>1 and addon.db.data.settings.wheelSlots[dragTarget]==first,
+  'wheel drag reorders entries in place')
+x,y=wheel.centerX+wheel.vectors[dragTarget][1]*wheel.radius,
+  wheel.centerY+wheel.vectors[dragTarget][2]*wheel.radius
+wheel.frame.scripts.OnDragStart(wheel.frame)
+x,y=wheel.centerX+wheel.outerRadius+40,wheel.centerY
+wheel.frame.scripts.OnDragStop(wheel.frame)
+assert(#addon.db.data.settings.wheelSlots==count,
+  'dragging an unlocked slot outside the ring removes it')
+x,y=wheel.centerX,wheel.centerY+wheel.radius
+wheel.frame.scripts.OnUpdate(wheel.frame)
+local hovered=addon.db.data.settings.wheelSlots[1].category or 'Preview'
+local beforeColor=addon.db.data.settings.wheelCategoryColors[hovered]
+wheel.frame.scripts.OnMouseDown(wheel.frame,'RightButton')
+assert(addon.db.data.settings.wheelCategoryColors[hovered]~=beforeColor,
+  'right-clicking a slot chooses its category color in edit mode')
+addon.db.data.settings.wheelCategoryColors[hovered]=beforeColor
+wheel.lockButton.scripts.OnClick(wheel.lockButton)
+assert(not addon.db.data.settings.wheelUnlocked and wheel.frame.shown)
+wheel.pinButton.scripts.OnClick(wheel.pinButton)
+assert(not addon.db.data.settings.wheelPinned)
+wheel:Close()
 click('Scale +'); click('Theme')
 assert(addon.db.data.settings.wheelScale>1 and addon.db.data.settings.wheelTheme=='Ember')
 click('Flip pie art')

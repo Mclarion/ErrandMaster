@@ -13,6 +13,7 @@ function navigation:Clear()
 end
 
 function navigation:Next(item)
+  if self.paused then return false end
   local settings = addon.db.data and addon.db.data.settings
   local provider = settings and settings.useTomTom and TomTom
   local compatible = type(provider) == "table" and type(provider.AddWaypoint) == "function" and
@@ -25,8 +26,12 @@ function navigation:Next(item)
   end
   if self.handle and self.provider == provider and self.key == key then return true end
   if not self:Clear() then return false end
+  local name = item.name:gsub("|", "/"):gsub("[%c]", " "):sub(1, 80)
+  local evidence = item.walkStatus == "known-route" and "observed destination" or
+    "direct target; walking path unverified"
   local ok, handle = pcall(provider.AddWaypoint, provider, item.mapID, item.x, item.y,
-    {title = "ErrandMaster: " .. item.name, source = "ErrandMaster", persistent = false, crazy = true})
+    {title = "ErrandMaster: " .. name .. " (" .. evidence .. ")",
+      source = "ErrandMaster", persistent = false, crazy = true})
   if ok and handle then
     self.handle, self.key, self.provider = handle, key, provider
     return true

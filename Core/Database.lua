@@ -4,9 +4,9 @@ local db = addon.db
 local SCHEMA = 5
 local MAX_WHEEL, MAX_FOLDER = 24, 8
 local wheelColors = {Copper=true, Amber=true, Green=true, Blue=true,
-  Teal=true, Violet=true, Rose=true, Slate=true}
-local wheelCategories = {"Repair", "Bank", "Auction House", "Mailbox", "Vendor",
-  "Class Trainer", "Custom"}
+  Teal=true, Violet=true, Rose=true, Slate=true, Red=true, Gold=true, Magenta=true}
+local wheelCategories = {"Bank", "Auction House", "Repair", "Vendor", "Mailbox",
+  "Trainer", "Travel", "Custom", "Quests", "Skills", "Items"}
 local function plain(value)
   if type(issecretvalue) == "function" then
     local ok, secret = pcall(issecretvalue, value)
@@ -99,13 +99,26 @@ local function normalizeSlots(slots)
   return result
 end
 
+local function normalizeCollection(items, kind)
+  local result = {}
+  if not plain(items) or type(items) ~= "table" or getmetatable(items) then return result end
+  for i = 1, MAX_WHEEL-1 do
+    local ok, copy = pcall(function() return safeEntry(items[i], true) end)
+    if not ok or not copy then break end
+    if copy.type == kind then result[#result+1] = copy end
+  end
+  return result
+end
+
 local function fresh()
   return {schema = SCHEMA, nextId = 1, nextLocationId = 1,
     account = {}, characters = {}, locations = {}, trails = {}, settings = {
     optimize = true, useTomTom = true, defaultScope = "character", discoverServices = false,
     wheelRadius = 110, wheelIconSize = 46, wheelSlots = normalizeSlots(),
     wheelScale = 1, wheelTheme = "Azure", wheelCategoryColors = {},
-    wheelArtReversed = false, windowPositions = {},
+    wheelSkills = {}, wheelItems = {},
+    wheelArtReversed = false, wheelUnlocked = false, wheelPinned = false,
+    windowPositions = {},
     trailRecording = false,
     routeMode = "observed", showDestinations = true,
   }}
@@ -170,6 +183,8 @@ function db:Initialize(character)
   self.trailStoreUnavailable = type(data.trails) ~= "table"
   data.settings = data.settings or {}
   data.settings.wheelSlots = normalizeSlots(data.settings.wheelSlots)
+  data.settings.wheelSkills = normalizeCollection(data.settings.wheelSkills, "spell")
+  data.settings.wheelItems = normalizeCollection(data.settings.wheelItems, "item")
   local colors, normalizedColors = data.settings.wheelCategoryColors, {}
   if plain(colors) and type(colors) == "table" and not getmetatable(colors) then
     local count = 0
@@ -183,6 +198,17 @@ function db:Initialize(character)
   data.settings.wheelCategoryColors = normalizedColors
   if type(data.settings.wheelArtReversed) ~= "boolean" then
     data.settings.wheelArtReversed = false
+  end
+  if type(data.settings.wheelUnlocked) ~= "boolean" then data.settings.wheelUnlocked = false end
+  if type(data.settings.wheelPinned) ~= "boolean" then data.settings.wheelPinned = false end
+  local center = data.settings.wheelCenter
+  if not plain(center) or type(center) ~= "table" or getmetatable(center) or
+      not plain(center.x) or not plain(center.y) or type(center.x) ~= "number" or
+      type(center.y) ~= "number" or center.x ~= center.x or center.y ~= center.y or
+      center.x < 0 or center.x > 1 or center.y < 0 or center.y > 1 then
+    data.settings.wheelCenter = nil
+  else
+    data.settings.wheelCenter = {x=center.x, y=center.y}
   end
   local positions = data.settings.windowPositions
   local clean = {}
@@ -237,6 +263,11 @@ function db:Initialize(character)
     end
   end
   characterData.professionOverrides=normalized
+  if type(characterData.activeErrandId) ~= "string" or
+      #characterData.activeErrandId > 40 or
+      not characterData.activeErrandId:match("^em%-%d+$") then
+    characterData.activeErrandId = nil
+  end
   self.character = character
   self.data = data
 end
@@ -283,6 +314,43 @@ function db:WheelInsert(entry, index)
   index = index or #slots+1
   if not validIndex(index, #slots+1) then return false end
   table.insert(slots, index, copy)
+  return true
+end
+function db:WheelAddMissingDefaults()
+  local present, slots = {}, self.data.settings.wheelSlots
+  for _,entry in ipairs(slots) do
+    if entry.type == "category" then present[entry.category] = true end
+  end
+  if present["Class Trainer"] then present.Trainer = true end
+  local added = 0
+  for _,category in ipairs(wheelCategories) do
+    if not present[category] and #slots < MAX_WHEEL and
+        self:WheelInsert({type="category", category=category}) then
+      present[category], added = true, added+1
+    end
+  end
+  return added
+end
+function db:WheelCollectionAdd(kind, entry)
+  if kind ~= "spell" and kind ~= "item" then return false end
+  local ok, copy = pcall(safeEntry, entry, true)
+  local collection = self.data.settings[kind == "spell" and "wheelSkills" or "wheelItems"]
+  if not ok or not copy or copy.type ~= kind or #collection >= MAX_WHEEL-1 then return false end
+  collection[#collection+1] = copy
+  return true
+end
+function db:WheelCollectionRemove(kind, index)
+  if kind ~= "spell" and kind ~= "item" then return false end
+  local collection = self.data.settings[kind == "spell" and "wheelSkills" or "wheelItems"]
+  if not validIndex(index, #collection) then return false end
+  table.remove(collection, index)
+  return true
+end
+function db:WheelCollectionMove(kind, from, to)
+  if kind ~= "spell" and kind ~= "item" then return false end
+  local collection = self.data.settings[kind == "spell" and "wheelSkills" or "wheelItems"]
+  if not validIndex(from, #collection) or not validIndex(to, #collection) then return false end
+  table.insert(collection, to, table.remove(collection, from))
   return true
 end
 function db:WheelReplace(index, entry)

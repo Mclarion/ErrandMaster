@@ -163,6 +163,41 @@ function addon:Refresh()
   if self.destinations then self.destinations:Refresh() end
   self:RevalidateNavigation()
 end
+function addon:ActivateTarget(id)
+  local bucket = self.db.data.characters[self.db.character]
+  if id ~= nil then
+    local item = self.errands:Get(id)
+    if not item or item.completed then return false end
+  end
+  bucket.activeErrandId = id
+  if self.navigation then self.navigation.paused = nil end
+  self:Refresh()
+  return true
+end
+function addon:ActiveTarget(ordered, deferred)
+  local bucket = self.db.data.characters[self.db.character]
+  local id = bucket.activeErrandId
+  if id then
+    local saved = self.errands:Get(id)
+    if not saved or saved.completed then bucket.activeErrandId = nil
+    else
+      for _, group in ipairs({ordered or {}, deferred or {}}) do
+        for _, item in ipairs(group) do if item.id == id then return item end end
+      end
+      return saved -- Off-map or unlocated: keep intent but do not invent a waypoint.
+    end
+  end
+  for _, item in ipairs(ordered or {}) do
+    local saved = item.id and self.errands:Get(item.id)
+    if saved and not saved.completed then return item end
+  end
+  local map = self:Position()
+  for _, item in ipairs(deferred or {}) do
+    local saved = item.id and self.errands:Get(item.id)
+    if saved and not saved.completed and map and item.mapID == map and
+        item.x and item.y then return item end
+  end
+end
 function addon:MovementTick()
   local taxiKnown, taxi = false, false
   if safe(UnitOnTaxi) and type(UnitOnTaxi) == "function" then
@@ -206,48 +241,48 @@ function addon:MovementTick()
   self:Refresh()
   return true
 end
-function addon:RevalidateNavigation(ordered)
+function addon:RevalidateNavigation(ordered, deferred)
   -- Recheck only the waypoint owned by ErrandMaster; other TomTom pins are untouched.
-  if not self.navigation or not self.navigation.handle then return end
+  if not self.navigation then return end
   if not ordered then
-    local ok, result = pcall(self.Plan, self)
+    local ok, result, pending = pcall(self.Plan, self)
     if not ok or not safe(result) or type(result) ~= "table" then
       self.navigation:Clear(); return
     end
-    ordered = result
+    ordered, deferred = result, pending
   end
-  local nextItem = ordered[1]
-  self.navigation:Next(nextItem and
-    (self.db.data.settings.routeMode ~= "observed" or
-      nextItem.walkStatus == "known-route") and nextItem or nil)
+  local target = self:ActiveTarget(ordered, deferred)
+  local map = self:Position()
+  self.navigation:Next(target and target.mapID == map and target or nil)
 end
 function addon:NavigateNext()
-  local route = self:Plan()
-  local nextItem = route[1]
+  self.navigation.paused = nil -- Explicit navigation resumes after a manual Clear pin.
+  local route, deferred = self:Plan()
+  local nextItem = self:ActiveTarget(route, deferred)
   if not nextItem then
     if not self.navigation:Clear() then
       self:Print("Old ErrandMaster TomTom pin could not be removed; clear it in TomTom.")
     end
-    self:Print(self.db.data.settings.routeMode == "observed" and
-      "No verified walking route to a stop on this map. Try /em trails on or /em walking off for direct estimates." or
-      "No positioned errands on this map.")
+    self:Print("No active target with a usable position on this map.")
     return
   end
-  if self.db.data.settings.routeMode == "observed" and
-      nextItem.walkStatus ~= "known-route" then
-    local cleared = self.navigation:Clear()
-    self:Print(string.format("Partial observed segment toward %s (%.0f yd recorded); connector unverified. %s",
-      nextItem.name, nextItem.walkYards or 0,
-      cleared and "No waypoint set." or "Old TomTom pin could not be removed."))
+  local map = self:Position()
+  local used = self.navigation:Next(nextItem.mapID == map and nextItem or nil)
+  if not nextItem.mapID or nextItem.mapID ~= map or not nextItem.x then
+    self:Print("Active target has no same-map coordinates. No TomTom arrow set.")
     return
   end
-  local used = self.navigation:Next(nextItem)
   self:Print(string.format("Next: %s (map %d, %.1f, %.1f%s). %s", nextItem.name,
     nextItem.mapID, nextItem.x*100, nextItem.y*100,
     nextItem.approximate and "; approximate player position" or "",
     used and "TomTom waypoint set." or (self.navigation.handle and
       "Old ErrandMaster pin could not be removed; no new pin set." or
       "Use the displayed coordinates; no compatible TomTom waypoint.")))
+  if nextItem.walkStatus ~= "known-route" then
+    self:Print(used and
+      "TomTom points directly at the target; walking path unknown, not a proven route." or
+      "Walking path unknown; coordinates indicate direction, not a proven route.")
+  end
   if nextItem.directYards then
     self:Print(string.format("Approximately %.0f yd straight-line; actual travel may be longer.",
       nextItem.directYards))
@@ -258,6 +293,55 @@ function addon:NavigateNext()
   if nextItem.locationSource == "questiedb-forever" or nextItem.npcID then
     self:Print("NPC position is a QuestieDB Forever candidate spawn, not confirmed on this build or a walking path.")
   end
+end
+function addon:FinishTargetOnInteraction(event, questID)
+  local ordered, deferred = self:Plan()
+  local target = self:ActiveTarget(ordered, deferred)
+  if not target or not target.id then return false end
+  local saved = self.errands:Get(target.id)
+  if not saved or saved.completed then return false end
+  local category = saved.category or ""
+  local matched = event == "MAIL_SHOW" and category == "Mailbox" or
+    event == "BANKFRAME_OPENED" and category == "Bank" or
+    event == "AUCTION_HOUSE_SHOW" and category == "Auction House" or
+    event == "TRAINER_SHOW" and category:find("Trainer", 1, true) ~= nil or
+    event == "MERCHANT_SHOW" and (category:find("Vendor", 1, true) ~= nil or
+      category == "Repair" and type(CanMerchantRepair) == "function" and
+      select(2, pcall(CanMerchantRepair)) == true) or
+    event == "QUEST_TURNED_IN" and saved.questID ~= nil and
+      saved.questID == questID
+  if not matched and event == "GOSSIP_SHOW" and category == "NPC Visit" and
+      (saved.npcID or target.npcID) then
+    matched = true -- Only an explicit NPC-visit errand; identity checked below.
+  end
+  if not matched then return false end
+  local confirmedNPC = false
+  if saved.npcID and target.npcID and saved.npcID ~= target.npcID then return false end
+  local expectedNPC = target.npcID or saved.npcID
+  if expectedNPC and event ~= "QUEST_TURNED_IN" then
+    if not safe(expectedNPC) or type(expectedNPC) ~= "number" then return false end
+    local ok, guid = pcall(function() return UnitGUID and UnitGUID("target") end)
+    local id = ok and safe(guid) and type(guid) == "string" and
+      guid:match("^Creature%-%d+%-%d+%-%d+%-%d+%-(%d+)%-%x+$")
+    if not id or tonumber(id) ~= expectedNPC then return false end
+    confirmedNPC = true
+  end
+  if target.mapID and target.x and target.y and not confirmedNPC and
+      event ~= "QUEST_TURNED_IN" then
+    local map, x, y = self:Position()
+    local width, height
+    if map then width, height = self:MapWorldSize(map) end
+    if map ~= target.mapID or not x or not y or not width or not height or
+        ((x-target.x)*width)^2 + ((y-target.y)*height)^2 > 25^2 then return false end
+  elseif not target.mapID and not confirmedNPC and
+      event ~= "QUEST_TURNED_IN" then
+    return false -- A generic interaction cannot identify an unlocated errand.
+  end
+  self.errands:Complete(saved.id)
+  self.db.data.characters[self.db.character].activeErrandId = nil
+  self:Refresh()
+  self:Print("Done: " .. saved.name:gsub("|", "/"):gsub("[%c]", " "))
+  return true
 end
 local function identity()
   local name, realm
@@ -282,8 +366,7 @@ function addon:Command(message)
   elseif command == "add" then
     self.ui.frame:Show(); self.ui.name:SetFocus()
   elseif command == "settings" then
-    self.ui.frame:Show()
-    self:Print("Window settings plus /em trails on/off and /em walking on/off.")
+    if self.addonSettings then self.addonSettings:Open() end
   elseif command == "route" then
     local ordered, deferred = self:Plan()
     local observed = self.db.data.settings.routeMode == "observed"
@@ -380,7 +463,8 @@ function addon:Command(message)
       else self:Print("Could not add pin; name must be at most 80 characters.") end
     end
   elseif command == "wheel" then
-    if argument == "settings" then self.radial:ShowSettings()
+    if argument == "settings" then
+      if self.addonSettings then self.addonSettings:Open() end
     elseif not self.radial:Open() then self:Print("Wheel unavailable in combat or without cursor position.") end
   elseif command == "discover" then
     local value = argument and argument:lower()
@@ -535,6 +619,7 @@ local function initialize()
       addon:Print("Trail storage is unavailable; its saved data was preserved. Other features remain available.")
     end
     addon.ui:Create()
+    if addon.addonSettings then addon.addonSettings:Register() end
     if addon.destinations then addon.destinations:Restore() end
     if addon.minimap then addon.minimap:Attach() end
     if addon.worldMap then addon.worldMap:Attach() end
@@ -551,7 +636,7 @@ local function initialize()
     pcall(events.RegisterEvent, events, "QUEST_POI_UPDATE")
     pcall(events.RegisterEvent, events, "QUEST_WATCH_UPDATE")
     for _, event in ipairs({"MERCHANT_SHOW", "MAIL_SHOW", "AUCTION_HOUSE_SHOW",
-        "BANKFRAME_OPENED", "TRAINER_SHOW"}) do
+        "BANKFRAME_OPENED", "TRAINER_SHOW", "GOSSIP_SHOW", "QUEST_TURNED_IN"}) do
       pcall(events.RegisterEvent, events, event) -- Optional service events must not block startup.
     end
     local elapsed, movementElapsed = 0, 0
@@ -614,6 +699,9 @@ events:SetScript("OnEvent", function(_, event, name)
       event == "TRAINER_SHOW") then
     local ok, err = pcall(addon.discovery.HandleEvent, addon.discovery, event)
     if not ok and addon.db.data.settings.debug then addon:Print("Discovery: " .. tostring(err)) end
+    addon:FinishTargetOnInteraction(event)
+  elseif addon.db.data and (event == "GOSSIP_SHOW" or event == "QUEST_TURNED_IN") then
+    addon:FinishTargetOnInteraction(event, name)
   elseif addon.db.data and (event == "ZONE_CHANGED_NEW_AREA" or
       event == "PLAYER_ENTERING_WORLD" or event == "QUEST_LOG_UPDATE" or
       event == "QUEST_POI_UPDATE" or event == "QUEST_WATCH_UPDATE") then

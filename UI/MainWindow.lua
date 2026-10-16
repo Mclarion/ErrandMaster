@@ -71,6 +71,10 @@ function ui:Create()
   end)
   frame:SetClampedToScreen(true)
   frame.TitleText:SetText("ErrandMaster - Smart Route Planner")
+  local icon = frame:CreateTexture(nil, "ARTWORK")
+  icon:SetSize(24, 24)
+  icon:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -3)
+  icon:SetTexture("Interface\\AddOns\\ErrandMaster\\Textures\\PackLogo.blp")
   frame:Hide()
   self.frame = frame
   self.zone = label(frame, "", 18, -35)
@@ -105,6 +109,7 @@ function ui:Create()
   self.clearWaypointButton = button(frame, "Clear pin", 347, -443, 96, function()
     local owned = addon.navigation.handle ~= nil
     if addon.navigation:Clear() then
+      addon.navigation.paused = true
       ui:Notice(owned and "ErrandMaster waypoint cleared." or "No ErrandMaster waypoint to clear.")
     else ui:Notice("Could not clear ErrandMaster waypoint; check TomTom.") end
   end)
@@ -156,8 +161,8 @@ function ui:Create()
     ui:Refresh()
     ui:Notice("Passive discovery " .. (settings.discoverServices and "on" or "off") .. ".")
   end)
-  button(frame, "Wheel settings", 18, -509, 110, function()
-    addon.radial:ShowSettings()
+  button(frame, "Settings", 18, -509, 110, function()
+    if addon.addonSettings then addon.addonSettings:Open() end
   end)
   self.mapButton = button(frame, "Map destinations", 134, -509, 139,
     function() addon:Command("map") end)

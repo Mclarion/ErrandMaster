@@ -1,4 +1,10 @@
-local addon = {db={data={settings={wheelRadius=110, wheelIconSize=46}}}, ui={}}
+local legacySlots = {}
+for i, category in ipairs({'Repair','Bank','Auction House','Mailbox','Vendor',
+  'Class Trainer','Custom'}) do
+  legacySlots[i] = {type='category',category=category}
+end
+local addon = {db={data={settings={wheelRadius=110, wheelIconSize=46,
+  wheelSlots=legacySlots}}}, ui={}}
 local function fakeFrame()
   local f = {scripts={}, shown=false}
   setmetatable(f, {__index=function(_, key)
@@ -36,10 +42,25 @@ addon.Print = function(_, value) printed[#printed+1] = value end
 local chunk = assert(loadfile("UI/RadialMenu.lua")); chunk("ErrandMaster", addon)
 local wheel = addon.radial
 assert(wheel:Open() and wheel.frame:IsShown())
+assert(wheel.capture == nil, 'wheel studio was never opened')
+assert(wheel:StartCapture() and wheel.capture:IsShown() and
+  wheel.capture.scripts.OnKeyDown and wheel.capture.scripts.OnMouseDown,
+  'AddOns settings binding captures a key without opening the old studio')
+wheel.capture.scripts.OnKeyDown(wheel.capture, 'ESCAPE')
+assert(not wheel.capture:IsShown(), 'Escape cancels binding capture')
 assert(wheel.slots[1].sector and wheel.slots[1].glow and
   wheel.slots[1].sector.texture:find('WheelSector07.blp',1,true))
 assert(wheel.slots[1].glow.texture:find('WheelGlow07.blp',1,true))
-assert(wheel.slots[1].label.text:find('QUEUE',1,true))
+assert(wheel.trim.texture:find('WheelTrim07.blp',1,true) and
+  wheel.centerArt.texture:find('WheelCenter.blp',1,true),
+  'decorative gilt rim and map hub follow the active slot count')
+assert(wheel.slots[1].texture.texture:find('PackRepair.blp',1,true) and
+  wheel.slots[3].texture.texture:find('PackAuctionHouse.blp',1,true) and
+  wheel.slots[4].texture.texture:find('PackMailbox.blp',1,true) and
+  wheel.slots[5].texture.texture:find('ServiceVendor.blp',1,true),
+  'service slots use readable bundled glyphs rather than red question marks')
+assert(wheel.slots[1].label.text=='Repair' and
+  wheel.detailText.text:find('Choose a service',1,true))
 assert(wheel.slots[2].sector.rotation<0)
 addon.db.data.settings.wheelArtReversed=true
 wheel:Layout()
@@ -52,9 +73,9 @@ assert(not wheel.slots[1].sector.shown and not wheel.slots[2].glow.shown and
 wheel.slots[2].sector.SetRotation=nil
 UnitClass = function() return "Hunter", "HUNTER" end
 wheel:Layout()
-assert(wheel.slots[2].texture.texture:find("Textures\\Bank.blp", 1, true))
+assert(wheel.slots[2].texture.texture:find("Textures\\PackBank.blp", 1, true))
 assert(wheel.slots[6].texture.texture:find("Textures\\ClassHunter.blp", 1, true))
-assert(wheel.slots[6].label.text:find("Hunter Trainer",1,true))
+assert(wheel.slots[6].label.text:find("Hunter",1,true))
 addon.Position=function() return 10,.1,.1 end
 addon.MapWorldSize=function() return 1000,1000 end
 addon.discovery={PlayerClass=function() return 'Hunter' end}
@@ -66,10 +87,11 @@ addon.npcs={IsReady=function() return true end,
     return {}
   end}
 wheel:Layout()
-assert(wheel.slots[2].label.text:find('Banker One',1,true) and
-  wheel.slots[6].label.text:find('Hunter Tutor',1,true))
+assert(wheel.slots[2].label.text=='Bank' and
+  not wheel.slots[6].label.text:find('Hunter Tutor',1,true),
+  'previews belong in the detail card, not around crowded wedges')
 wheel:SetSelection(2)
-assert(wheel.centerLabel.text:find('~40 yd direct',1,true))
+assert(wheel.detailText.text:find('~40 yd direct',1,true))
 addon.ProfessionFilters=function() return {'Alchemy'} end
 addon.db.data.settings.wheelSlots={}
 for i,category in ipairs({'Repair','Bank','Auction House','Mailbox','Vendor',
@@ -83,24 +105,25 @@ addon.npcs.Nearest=function(_,map,x,y,wanted)
   return originalNearest(_,map,x,y,wanted)
 end
 wheel:Layout()
-assert(wheel.slots[7].label.text:find('Alchemy Coach',1,true),
+wheel:SetSelection(7)
+assert(wheel.detailText.text:find('Alchemy Coach',1,true),
   'wheel profession preview respects character-selected profession')
-addon.db.data.settings.wheelSlots=nil
+addon.db.data.settings.wheelSlots=legacySlots
 addon.npcs=nil
 assert(wheel.centerX == 960 and wheel.centerY == 540)
-assert(#cursorCalls == 1 and cursorCalls[1]:find("ErrandMaster",1,true))
+assert(#cursorCalls == 0, 'native cursor must stay visible for bag-to-wheel dragging')
 mouseY = 650; wheel.frame.scripts.OnUpdate(wheel.frame)
 assert(wheel.selected == 1)
 wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
 assert(#opened == 1 and opened[1] == "Repair")
-assert(not wheel.frame:IsShown() and cursorCalls[#cursorCalls] == "restore")
+assert(not wheel.frame:IsShown() and #cursorCalls == 0)
 mouseX,mouseY=960,540
 assert(wheel:Open()); wheel.frame.scripts.OnUpdate(wheel.frame)
 assert(wheel.selected == nil)
 wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
 assert(#opened == 1 and not wheel.frame:IsShown())
 assert(wheel:Open()); wheel.frame.scripts.OnKeyDown(wheel.frame, "ESCAPE")
-assert(not wheel.frame:IsShown() and cursorCalls[#cursorCalls] == "restore")
+assert(not wheel.frame:IsShown() and #cursorCalls == 0)
 SetCursor=function() error('cursor unavailable') end
 assert(wheel:Open() and wheel.frame:IsShown())
 wheel:Close()
@@ -114,7 +137,7 @@ assert(#opened == 1 and not wheel.frame:IsShown())
 mouseX,mouseY=960,540
 assert(wheel:Open())
 wheel.frame.scripts.OnEvent(wheel.frame, "PLAYER_REGEN_DISABLED")
-assert(not wheel.frame:IsShown() and cursorCalls[#cursorCalls] == "restore")
+assert(not wheel.frame:IsShown() and #cursorCalls == 0)
 -- Changing the key is a user-initiated, out-of-combat binding operation.
 local expected = {"Bank", "Auction House", "Mailbox", "Vendor", "Class Trainer", "Custom"}
 for i, category in ipairs(expected) do
@@ -125,8 +148,9 @@ for i, category in ipairs(expected) do
   wheel.frame.scripts.OnUpdate(wheel.frame)
   assert(wheel.selected == i+1, "incorrect highlighted wheel category")
   wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
-  if category == "Vendor" then
-    assert(wheel.frame:IsShown() and wheel.submenu == "vendor")
+  if category == "Bank" or category == "Vendor" or category == "Mailbox" or
+      category == "Custom" then
+    assert(wheel.frame:IsShown() and wheel.submenu == category)
     wheel:Close()
   else
     assert(opened[#opened] == category and not wheel.frame:IsShown())
@@ -154,8 +178,8 @@ assert(wheel:Open())
 local vendorAngle = math.pi/2 - 4*2*math.pi/7
 mouseX, mouseY = 960 + 110*math.cos(vendorAngle), 540 + 110*math.sin(vendorAngle)
 wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
-assert(wheel.submenu == "vendor" and wheel.frame:IsShown())
-local ammoAngle = math.pi/2 - 2*math.pi/7
+assert(wheel.submenu == "Vendor" and wheel.frame:IsShown())
+local ammoAngle = math.pi/2 - 4*math.pi/6
 mouseX = wheel.centerX + 110*math.cos(ammoAngle)
 mouseY = wheel.centerY + 110*math.sin(ammoAngle)
 wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")

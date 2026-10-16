@@ -7,7 +7,7 @@ from pathlib import Path
 import struct
 
 ROOT = Path(__file__).resolve().parents[1] / "Textures"
-SIZE = 128
+SIZE = 512
 
 
 def asset(count, glow):
@@ -22,12 +22,14 @@ def asset(count, glow):
             border = min(radius - .31, .93 - radius,
                          (angle_limit - angle) * max(radius, .31))
             if glow:
-                edge = max(0, 1 - abs(border) / .055)
-                alpha = int(75 * edge) if .26 < radius < .99 and angle < angle_limit + .08 else 0
-            elif border >= 0:
-                alpha = 210 if border < .018 else 66
+                edge = max(0, 1 - abs(border) / .037)
+                alpha = int(130 * edge) if .27 < radius < .97 and angle < angle_limit + .05 else 0
             else:
-                alpha = 0
+                # Signed-distance coverage gives a soft ~2px boundary at this
+                # resolution instead of the former hard 128px stair steps.
+                coverage = max(0, min(1, (border + .004) / .008))
+                rim = max(0, 1 - max(border, 0) / .014)
+                alpha = int((42 + 100 * rim) * coverage)
             raw.extend((255, 255, 255, alpha))
     header = struct.pack("<4sI4BII", b"BLP2", 1, 3, 8, 8, 0, SIZE, SIZE)
     header += struct.pack("<16I", 1172, *([0] * 15))

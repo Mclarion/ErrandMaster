@@ -18,13 +18,20 @@ assert(ErrandMasterDB.settings.showDestinations == true,
   'a new character starts with the separate target tracker visible')
 assert(ErrandMasterDB.settings.trailRecording == false and
   ErrandMasterDB.settings.routeMode == "observed")
-assert(#ErrandMasterDB.settings.wheelSlots == 7)
-assert(ErrandMasterDB.settings.wheelSlots[1].category == "Repair")
-assert(ErrandMasterDB.settings.wheelSlots[7].category == "Custom")
+assert(#ErrandMasterDB.settings.wheelSlots == 11)
+assert(ErrandMasterDB.settings.wheelSlots[1].category == "Bank")
+assert(ErrandMasterDB.settings.wheelSlots[11].category == "Items")
+assert(#ErrandMasterDB.settings.wheelSkills == 0 and #ErrandMasterDB.settings.wheelItems == 0)
+assert(addon.db:WheelCollectionAdd('spell',{type='spell',id=101}) and
+  addon.db:WheelCollectionAdd('item',{type='item',id=202}))
+assert(not addon.db:WheelCollectionAdd('spell',{type='item',id=202}) and
+  not addon.db:WheelCollectionAdd('spell',{type='spell',id=-1}))
 ErrandMasterDB.settings.wheelSlots[2] = {type="spell", id=12345}
 ErrandMasterDB.settings.showDestinations = false
 addon.db:Initialize("Other-Realm")
 assert(ErrandMasterDB.settings.wheelSlots[2].id == 12345, "wheel slots are account-wide")
+assert(ErrandMasterDB.settings.wheelSkills[1].id == 101 and
+  ErrandMasterDB.settings.wheelItems[1].id == 202)
 assert(ErrandMasterDB.settings.showDestinations == false,
   'an intentionally hidden tracker remains hidden after reinitialization')
 assert(#addon.db:ProfessionOverrides()==0)
@@ -43,7 +50,7 @@ local legacy = {schema=2, nextId=1, nextLocationId=1, account={}, characters={},
   locations={}, settings={wheelRadius=110, wheelIconSize=46}}
 ErrandMasterDB = legacy
 addon.db:Initialize("Test-Realm")
-assert(ErrandMasterDB == legacy and legacy.schema == 5 and #legacy.settings.wheelSlots == 7)
+assert(ErrandMasterDB == legacy and legacy.schema == 5 and #legacy.settings.wheelSlots == 11)
 ErrandMasterDB.settings.wheelSlots[3] = {type="macro", id=42}
 addon.db:Initialize("Test-Realm")
 assert(ErrandMasterDB.settings.wheelSlots[3].id == 42)
@@ -57,12 +64,12 @@ issecretvalue = function(value) return value == secret end
 ErrandMasterDB.settings.wheelSlots[7] = secret
 addon.db:Initialize("Test-Realm")
 issecretvalue = nil
-assert(#ErrandMasterDB.settings.wheelSlots == 8 and ErrandMasterDB.settings.wheelSlots[8].id == 123)
-assert(ErrandMasterDB.settings.wheelSlots[3].category == "Auction House")
-assert(ErrandMasterDB.settings.wheelSlots[4].category == "Mailbox")
-assert(ErrandMasterDB.settings.wheelSlots[5].category == "Vendor")
-assert(ErrandMasterDB.settings.wheelSlots[6].category == "Class Trainer")
-assert(ErrandMasterDB.settings.wheelSlots[7].category == "Custom")
+assert(#ErrandMasterDB.settings.wheelSlots == 11 and ErrandMasterDB.settings.wheelSlots[8].id == 123)
+assert(ErrandMasterDB.settings.wheelSlots[3].category == "Repair")
+assert(ErrandMasterDB.settings.wheelSlots[4].category == "Vendor")
+assert(ErrandMasterDB.settings.wheelSlots[5].category == "Mailbox")
+assert(ErrandMasterDB.settings.wheelSlots[6].category == "Trainer")
+assert(ErrandMasterDB.settings.wheelSlots[7].category == "Travel")
 ErrandMasterDB.settings.wheelRadius = 0/0
 ErrandMasterDB.settings.wheelIconSize = 0/0
 addon.db:Initialize("Test-Realm")
@@ -73,24 +80,28 @@ addon.db:Initialize('Test-Realm')
 assert(ErrandMasterDB.settings.wheelArtReversed==false)
 assert(addon.db:SetWheelColor('Vendor','Amber') and
   ErrandMasterDB.settings.wheelCategoryColors.Vendor=='Amber')
+assert(addon.db:SetWheelColor('Repair','Red') and
+  addon.db:SetWheelColor('Travel','Gold') and
+  addon.db:SetWheelColor('Custom','Magenta'))
 assert(not addon.db:SetWheelColor('Vendor','bad') and
   not addon.db:SetWheelColor('bad|name','Green'))
 ErrandMasterDB.settings.wheelCategoryColors['Bad|name']='Green'
 ErrandMasterDB.settings.windowPositions={targets={x=.25,y=.4}, main={x=0/0,y=.4}}
 addon.db:Initialize('Test-Realm')
 assert(ErrandMasterDB.settings.wheelCategoryColors.Vendor=='Amber' and
-  not ErrandMasterDB.settings.wheelCategoryColors['Bad|name'])
+  not ErrandMasterDB.settings.wheelCategoryColors['Bad|name'] and
+  ErrandMasterDB.settings.wheelCategoryColors.Travel=='Gold')
 assert(ErrandMasterDB.settings.windowPositions.targets.x==.25 and
   not ErrandMasterDB.settings.windowPositions.main)
 assert(addon.db:SetWheelColor('Vendor',nil) and
   not ErrandMasterDB.settings.wheelCategoryColors.Vendor)
-assert(addon.db:WheelInsert({type="addon", name="ErrandMaster"}) and #ErrandMasterDB.settings.wheelSlots == 9)
-assert(addon.db:WheelMove(9, 2) and ErrandMasterDB.settings.wheelSlots[2].name == "ErrandMaster")
-assert(addon.db:WheelFolder(2, 3, "Useful") and #ErrandMasterDB.settings.wheelSlots == 8)
+assert(addon.db:WheelInsert({type="addon", name="ErrandMaster"}) and #ErrandMasterDB.settings.wheelSlots == 12)
+assert(addon.db:WheelMove(12, 2) and ErrandMasterDB.settings.wheelSlots[2].name == "ErrandMaster")
+assert(addon.db:WheelFolder(2, 3, "Useful") and #ErrandMasterDB.settings.wheelSlots == 11)
 assert(ErrandMasterDB.settings.wheelSlots[2].type == "folder" and
   ErrandMasterDB.settings.wheelSlots[2].entries[1].name == "ErrandMaster")
 assert(addon.db:WheelRemove(2, 1) and ErrandMasterDB.settings.wheelSlots[2].type == "category")
-assert(addon.db:WheelRemove(2) and #ErrandMasterDB.settings.wheelSlots == 7)
+assert(addon.db:WheelRemove(2) and #ErrandMasterDB.settings.wheelSlots == 10)
 local prior = ErrandMasterDB.settings.wheelSlots[1]
 assert(not addon.db:WheelInsert({type="macro", id=1, script="/cast Bad"}))
 assert(not addon.db:WheelInsert({type="addon", name="bad\naddon"}))
@@ -109,6 +120,17 @@ assert(#ErrandMasterDB.settings.wheelSlots == 2)
 addon.db:WheelRemove(2); addon.db:WheelRemove(1)
 addon.db:Initialize("Test-Realm")
 assert(#ErrandMasterDB.settings.wheelSlots == 0, "an intentionally empty wheel stays empty")
+local priorLayout = {'Repair','Bank','Auction House','Mailbox','Vendor',
+  'Class Trainer','Custom'}
+for _,name in ipairs(priorLayout) do
+  assert(addon.db:WheelInsert({type='category',category=name}))
+end
+local original = ErrandMasterDB.settings.wheelSlots[1]
+assert(addon.db:WheelAddMissingDefaults()==4 and
+  #ErrandMasterDB.settings.wheelSlots==11 and
+  ErrandMasterDB.settings.wheelSlots[1]==original)
+assert(addon.db:WheelAddMissingDefaults()==0,'migration action is idempotent')
+ErrandMasterDB.settings.wheelSlots={}
 assert(addon.db:WheelInsert({type="category", category="Repair"}))
 local trail=addon.db:TrailBucket()
 assert(type(trail.nodes)=="table" and type(trail.edges)=="table")
@@ -153,12 +175,20 @@ ErrandMasterDB=retained
 addon.db:Initialize("Test-Realm")
 local first = addon.errands:Add({name="Bank", mapID=10, x=0.2, y=0.2, scope="character"})
 local second = addon.errands:Add({name="Mail", mapID=10, x=0.8, y=0.8, scope="account"})
+assert(first.favorite == nil)
+addon.errands:Update(first.id, {favorite=true})
+assert(first.favorite == true)
+fails(function() addon.errands:Update(first.id, {favorite="yes"}) end)
+assert(first.favorite == true, "invalid favorite update is atomic")
+addon.errands:Update(first.id, {favorite=false})
+assert(first.favorite == false)
 assert(first.id ~= second.id and first.createdAt > 0)
 assert(#addon.errands:All("Test-Realm") == 2)
 assert(#addon.errands:All("Other-Realm") == 1)
 local stored = ErrandMasterDB
 addon.db:Initialize("Test-Realm")
 assert(ErrandMasterDB == stored and addon.errands:Get(first.id) == first)
+assert(first.favorite == false, "favorite survives saved-data initialization")
 fails(function() addon.errands:Add({name="Bad", mapID=10, x=1.2, y=0.2}) end)
 fails(function() addon.errands:Add({name="Bad", mapID=10, x=0/0, y=0.2}) end)
 fails(function() addon.errands:Add({name="Bad", mapID=10, x=0.2}) end)

@@ -43,9 +43,9 @@ $stateHashes=@{};foreach($state in $states){$stateHashes[$state.FullName]=(Get-F
 $stage=Join-Path $interface ('.ErrandMaster-stage-'+[guid]::NewGuid().ToString('N'))
 $backupRoot=Join-Path $interface 'ErrandMaster-backups'
 $stamp=[DateTime]::UtcNow.ToString('yyyyMMddHHmmss')+'-'+[guid]::NewGuid().ToString('N')
-$backup=Join-Path $backupRoot ('ErrandMaster-v0.6.1-rc1-'+$stamp)
-$savedBackup=Join-Path $backupRoot ('SavedVariables-v0.6.1-rc1-'+$stamp)
-$stateBackup=Join-Path $backupRoot ('AddonStates-v0.6.1-rc1-'+$stamp)
+$backup=Join-Path $backupRoot ('ErrandMaster-before-dev-'+$stamp)
+$savedBackup=Join-Path $backupRoot ('SavedVariables-before-dev-'+$stamp)
+$stateBackup=Join-Path $backupRoot ('AddonStates-before-dev-'+$stamp)
 $backedUp=$false
 try{
  if((Get-PSDrive -Name B).Free -lt 104857600){throw 'Insufficient free space for staged upgrade'}

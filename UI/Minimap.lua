@@ -3,7 +3,7 @@ local _, addon = ...
 addon.minimap = {}
 local control = addon.minimap
 local DEFAULT_ANGLE = 45
-local ICON = "Interface\\Icons\\INV_Misc_Map_01"
+local ICON = "Interface\\AddOns\\ErrandMaster\\Textures\\PackLogo.blp"
 
 local function plain(value)
   local ok, safe = pcall(function()
@@ -79,7 +79,7 @@ function control:Attach()
     local icon = item:CreateTexture(nil, "ARTWORK")
     icon:SetAllPoints(item)
     icon:SetTexture(ICON)
-    item:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    item:RegisterForClicks("LeftButtonUp", "RightButtonUp", "MiddleButtonUp")
     item:RegisterForDrag("LeftButton")
     item:SetScript("OnMouseDown", function()
       -- If dragging did not generate a release click, do not swallow the next click.
@@ -88,8 +88,9 @@ function control:Attach()
     item:SetScript("OnClick", function(_, mouse)
       if self.suppressClick then self.suppressClick = nil; return end
       local target, method
-      if mouse == "LeftButton" then target, method = addon.radial, "ShowSettings"
-      elseif mouse == "RightButton" then target, method = addon.destinations, "Toggle" end
+      if mouse == "LeftButton" then target, method = addon.radial, "Open"
+      elseif mouse == "RightButton" then target, method = addon.destinations, "Toggle"
+      elseif mouse == "MiddleButton" then target, method = addon.addonSettings, "Open" end
       local accessible, callback = pcall(function() return target and target[method] end)
       if accessible and plain(callback) and type(callback) == "function" then
         pcall(callback, target)
