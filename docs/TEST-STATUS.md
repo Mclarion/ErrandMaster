@@ -1,0 +1,14 @@
+# v0.6.0-rc1 test status
+
+**Installed for player testing; not verified in-game.** The published source is tag `v0.6.0-rc1` at `ea060f0f6bd45355da98ac7ff7d4c2075b3a8e8e`. The runtime ZIP SHA-256 is `31f86c60f0d91aed67196d29e7cead03aa0b65fe3a64261c67f06df28cc691a4`. QuestieDB Forever v1.0.6 is a separate required addon; no provider catalog is bundled in the public repository.
+
+The stopped Forever Beta executable reported `1.60.1.70425` before and after installation. Readback matched 36 installed ErrandMaster files, 62 QuestieDB files, and all 31 files in the retained v0.5 addon backup. Four of four addon-state files enable both addons. Two preinstall ErrandMaster SavedVariables files and the four original addon-state files were backed up and independently matched by hash. No installation staging directory remained. The game's interface number and addon load remain **unverified in-client**; the game was not started on the player's behalf.
+
+## First player-run checks
+
+1. On the character-selection AddOns screen confirm both QuestieDB and ErrandMaster load. In-game run `/dump select(4, GetBuildInfo())`; the TOC expects interface `16001`. Check Lua errors and run `/em npcs status` until the provider index completes.
+2. At a known location, try `/em npcs find <name>`, `/em npcs near bank`, `/em npcs class <class>`, and `/em npcs profession <profession>`. The name search shows candidate coordinates and geometric proximity. Class/profession specialties require positive provider subtitle evidence and may be incomplete, locale-dependent, phased, or on the wrong floor.
+3. Open `/em wheel`, inspect the nearest service NPC preview and its **direct** distance, queue a service option, then run `/em route`. Check that the itinerary refreshes immediately and that an unobserved or disconnected walking segment stays **unknown/partial**, never a claimed path. `/em walking off` switches to explicitly labeled straight-line estimates; it does not create traversability evidence.
+4. Check map candidate pins, `/em npc <ID>`, `/em npc add <ID>`, `/reload`, and character switching. Trail recording is off by default; `/em trails on` is an explicit per-character opt-in. Report Lua errors, the command/output involved, map/phase/faction, and any mismatched NPC location without sharing private SavedVariables or credentials.
+
+For the full client matrix and rollback after a schema-5 save, see `docs/READINESS.md`. Do not restore v0.5 code alone after v0.6 has written SavedVariables; restore its matching preinstall save and addon-state backups with WoW stopped, preserving any newer save separately.
