@@ -55,6 +55,22 @@ assert(wheel.slots[2].label.text:find('Banker One',1,true) and
   wheel.slots[6].label.text:find('Hunter Tutor',1,true))
 wheel:SetSelection(2)
 assert(wheel.centerLabel.text:find('~40 yd direct',1,true))
+addon.ProfessionFilters=function() return {'Alchemy'} end
+addon.db.data.settings.wheelSlots={}
+for i,category in ipairs({'Repair','Bank','Auction House','Mailbox','Vendor',
+  'Class Trainer','Profession Trainer'}) do
+  addon.db.data.settings.wheelSlots[i]={type='category',category=category}
+end
+local originalNearest=addon.npcs.Nearest
+addon.npcs.Nearest=function(_,map,x,y,wanted)
+  if wanted=='Mining Trainer' then return {{name='Mining Coach',directYards=10}} end
+  if wanted=='Alchemy Trainer' then return {{name='Alchemy Coach',directYards=100}} end
+  return originalNearest(_,map,x,y,wanted)
+end
+wheel:Layout()
+assert(wheel.slots[7].label.text:find('Alchemy Coach',1,true),
+  'wheel profession preview respects character-selected profession')
+addon.db.data.settings.wheelSlots=nil
 addon.npcs=nil
 assert(wheel.centerX == 960 and wheel.centerY == 540)
 assert(#cursorCalls == 1 and cursorCalls[1]:find("ErrandMaster",1,true))
@@ -139,8 +155,31 @@ SaveBindings = function() end -- Native API has no documented success return.
 IsShiftKeyDown = function() return false end
 IsControlKeyDown = function() return false end
 IsAltKeyDown = function() return false end
+local professions={}
+addon.db.AddProfession=function(_,name) professions[#professions+1]=name; return true end
+addon.db.RemoveProfession=function(_,name)
+  for i,entry in ipairs(professions) do
+    if entry==name then table.remove(professions,i); return true end
+  end
+end
+addon.db.ClearProfessions=function() professions={} end
+addon.ProfessionFilters=function()
+  return professions,#professions>0 and 'manual' or 'unavailable'
+end
 wheel:ShowSettings()
 assert(wheel.settingsFrame:IsShown())
+assert(wheel.professionInput and wheel.professionStatus and wheel.professionAddButton,
+  'wheel settings expose manual profession selection')
+wheel.professionInput:SetText('Alchemy')
+wheel.professionAddButton.scripts.OnClick(wheel.professionAddButton)
+assert(#professions==1 and professions[1]=='Alchemy' and
+  wheel.professionStatus.text:find('Alchemy',1,true))
+wheel.professionRemoveButton.scripts.OnClick(wheel.professionRemoveButton)
+assert(#professions==0)
+wheel.professionInput:SetText('Mining')
+wheel.professionAddButton.scripts.OnClick(wheel.professionAddButton)
+wheel.professionAutoButton.scripts.OnClick(wheel.professionAutoButton)
+assert(#professions==0)
 wheel.bindButton.scripts.OnClick(wheel.bindButton)
 wheel.capture.scripts.OnKeyDown(wheel.capture, "F7")
 assert(wheel.bindingLabel.text:find("F7",1,true))

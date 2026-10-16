@@ -122,13 +122,15 @@ function ui:Create()
     ui:Refresh()
     ui:Notice("Passive discovery " .. (settings.discoverServices and "on" or "off") .. ".")
   end)
-  button(frame, "Wheel settings", 18, -509, 160, function()
+  button(frame, "Wheel settings", 18, -509, 110, function()
     addon.radial:ShowSettings()
   end)
-  self.mapButton = button(frame, "Map destinations", 190, -509, 155,
+  self.mapButton = button(frame, "Map destinations", 134, -509, 139,
     function() addon:Command("map") end)
-  self.npcButton = button(frame, "NPCs", 355, -509, 88,
+  self.npcButton = button(frame, "NPCs", 279, -509, 78,
     function() addon:Command("npcs") end)
+  self.targetsButton = button(frame, "Targets", 362, -509, 81,
+    function() addon.destinations:Toggle() end)
   self.npcStatus = label(frame, "NPC catalog: loading", 466, -535)
   self:Refresh()
 end

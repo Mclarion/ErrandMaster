@@ -1,5 +1,7 @@
 # v0.6 offline and client readiness
 
+**v0.6.1-rc1 is an offline candidate; v0.6.0-rc1 remains installed.** For the next guarded test, verify the default right-side target tracker and persistent hide/show choice beside RestedXP, profession auto/manual filtering per character, 50-yard/map-change replanning, and one post-taxi refresh after a valid landing position. Adjacent-zone hits are direct-distance suggestions with unknown ground crossings. Flight advice is restricted to currently open, reachable taxi nodes with an exact destination-map name match; no global route or flight-map annotation is claimed. Keep the installed game and SavedVariables untouched until the player authorizes a stopped-client swap.
+
 This is a test-candidate checklist, not proof of in-client compatibility. The player authorized preparing v0.6.0-rc1 for testing; do not launch WoW on their behalf. A guarded swap retains v0.5.0 as a backup outside active `AddOns`; installation status requires independent readback. The observed executable is Forever Beta 1.60.1.70425; interface 16001 must be confirmed in-game.
 
 ## Offline acceptance before a live test

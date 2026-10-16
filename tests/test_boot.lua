@@ -58,6 +58,28 @@ assert(not addon.db.data)
 UnitFullName = function() return "Test", "Realm" end
 eventFrame.scripts.OnEvent(eventFrame, "PLAYER_LOGIN")
 assert(addon.db.data and SlashCmdList.ERRANDMASTER and SLASH_ERRANDMASTER1 == "/em", messages[#messages])
+assert(addon.destinations.frame and addon.destinations.frame:IsShown(),
+  'the separate right-side targets panel is visible on first login')
+assert(addon.ui.targetsButton and addon.ui.targetsButton.scripts.OnClick,
+  'the main window exposes a Targets control')
+addon.ui.targetsButton.scripts.OnClick(addon.ui.targetsButton)
+assert(not addon.destinations.frame:IsShown() and
+  addon.db.data.settings.showDestinations==false)
+addon.ui.targetsButton.scripts.OnClick(addon.ui.targetsButton)
+assert(addon.destinations.frame:IsShown() and
+  addon.db.data.settings.showDestinations==true)
+GetProfessions=function() return 1,2 end
+GetProfessionInfo=function(index) return index==1 and 'Mining' or 'Alchemy' end
+local automatic,source=addon:ProfessionFilters()
+assert(source=='auto' and #automatic==2 and automatic[1]=='Mining')
+assert(addon.db:AddProfession('Fishing'))
+local manual,manualSource=addon:ProfessionFilters()
+assert(manualSource=='manual' and #manual==1 and manual[1]=='Fishing',
+  'explicit character preference overrides optional client profession detection')
+addon.db:ClearProfessions()
+GetProfessions=nil; GetProfessionInfo=nil
+local unavailable,unavailableSource=addon:ProfessionFilters()
+assert(unavailableSource=='unavailable' and #unavailable==0)
 assert(addon.npcs.state=='indexing', 'provider loaded before ErrandMaster starts')
 assert(addon.minimap and addon.minimap.Attach and addon.destinations and
   addon.destinations.Toggle, 'the boot harness loads every TOC module')
@@ -133,6 +155,40 @@ SlashCmdList.ERRANDMASTER("optimize")
 SlashCmdList.ERRANDMASTER("debug")
 SlashCmdList.ERRANDMASTER("help")
 C_Map.GetMapWorldSize = function(id) assert(id == 10); return 1000, 500 end
+local liveX, liveY = .2, .3
+C_Map.GetPlayerMapPosition=function() return {GetXY=function() return liveX,liveY end} end
+local movedRefreshes=0
+local normalRefresh=addon.Refresh
+addon.Refresh=function(self)
+  movedRefreshes=movedRefreshes+1
+  return normalRefresh(self)
+end
+assert(type(addon.MovementTick)=='function', 'movement must trigger route refresh without trail consent or an active waypoint')
+assert(not addon:MovementTick())
+liveX=.24
+assert(not addon:MovementTick() and movedRefreshes==0, '40 yards does not trigger replanning')
+liveX=.251
+assert(addon:MovementTick() and movedRefreshes==1, '51 yards triggers a route refresh')
+local onTaxi=true
+UnitOnTaxi=function() return onTaxi end
+liveX=.4
+assert(not addon:MovementTick() and movedRefreshes==1, 'do not replan during taxi travel')
+onTaxi=false
+assert(addon:MovementTick() and movedRefreshes==2, 'landing immediately re-evaluates the route')
+onTaxi=true
+assert(not addon:MovementTick())
+onTaxi=false
+C_Map.GetPlayerMapPosition=function() return nil end
+assert(not addon:MovementTick() and movedRefreshes==2,
+  'landing waits for a valid post-flight location rather than using stale coordinates')
+C_Map.GetPlayerMapPosition=function() return {GetXY=function() return .4,.3 end} end
+assert(addon:MovementTick() and movedRefreshes==3,
+  'a valid post-flight sample replans once without a 50-yard requirement')
+assert(not addon:MovementTick() and movedRefreshes==3)
+addon.Refresh=normalRefresh
+C_Map.GetPlayerMapPosition=function() return {GetXY=function() return .2,.3 end} end
+UnitOnTaxi=nil
+addon.movementOrigin={map=10,x=.2,y=.3}
 C_QuestLog = {
   GetQuestsOnMap=function(id) return id == 10 and {{questID=501, mapID=10, x=.4, y=.5}} or {} end,
   GetLogIndexForQuestID=function(id) return id == 501 and 1 or nil end,
@@ -180,6 +236,45 @@ assert(removed==2 and addon.navigation.handle==nil,
 addon.Plan=originalPlan
 eventFrame.scripts.OnUpdate(eventFrame,.1) -- Finish indexing before timing navigation.
 assert(addon.npcs:IsReady() and #addon.npcs:LocationsOnMap(10,'Bank')==1)
+local baseNearby=addon.zoneSearch.Nearby
+addon.zoneSearch.Nearby=function(_,map,x,y,wanted)
+  assert(map==10 and x==.2 and y==.3 and wanted=='Bank')
+  return {{name='Border Banker',category='Bank',mapID=20,zoneName='Border',
+    x=.1,y=.5,directYards=150}}
+end
+local baseRoute=addon.route.Plan
+addon.route.Plan=function() return {},{{id='border',name='Find bank',category='Bank'}} end
+local _,borderDeferred=addon:Plan()
+assert(borderDeferred[1].nearbyZoneCandidate and
+  borderDeferred[1].nearbyZoneCandidate.zoneName=='Border',
+  'unrouted nearby zone candidate remains deferred')
+addon.destinations:Refresh()
+assert(addon.destinations.lines[1]:find('Border',1,true) and
+  addon.destinations.lines[1]:find('direct',1,true),
+  'the target panel labels an unknown border route as a direct-distance hint')
+addon.route.Plan=baseRoute
+addon.zoneSearch.Nearby=baseNearby
+C_Map.GetMapInfo=function(id) return {name=id==20 and 'Ironforge' or 'Test Zone'} end
+NumTaxiNodes=function() return 2 end
+TaxiNodeGetType=function(i) return i==2 and 'REACHABLE' or 'CURRENT' end
+TaxiNodeName=function(i) return i==2 and 'Ironforge' or 'Test Zone' end
+eventFrame.scripts.OnEvent(eventFrame,'TAXIMAP_OPENED')
+assert(addon.taxiAdvice:ForMap(20)=='Ironforge')
+addon.route.Plan=function() return {},{{id='trainer',name='Shaman trainer',
+  category='Class Trainer',mapID=20}} end
+local _,flightDeferred=addon:Plan()
+assert(flightDeferred[1].taxiFlightNode=='Ironforge',
+  'open taxi-map reachability gives an optional flight leg to the named map')
+addon.destinations:Refresh()
+assert(addon.destinations.lines[1]:find('Ironforge',1,true) and
+  addon.destinations.lines[1]:find('Shaman trainer',1,true) and
+  addon.destinations.lines[1]:find('walk unknown',1,true),
+  'the panel retains the requested trainer and keeps the post-flight walk unverified')
+eventFrame.scripts.OnEvent(eventFrame,'TAXIMAP_CLOSED')
+assert(not addon.taxiAdvice:ForMap(20))
+addon.route.Plan=baseRoute
+NumTaxiNodes=nil; TaxiNodeGetType=nil; TaxiNodeName=nil
+C_Map.GetMapInfo=nil
 assert(addon.ui.npcButton and addon.ui.npcStatus.text=='NPC catalog: ready',
   'main window shows the provider index state and a catalog entry point')
 addon.navigation.provider={RemoveWaypoint=function(_, handle)
@@ -194,8 +289,15 @@ assert(removed==3 and addon.navigation.handle==nil,
 addon.Plan=originalPlan
 SlashCmdList.ERRANDMASTER("walking off")
 SlashCmdList.ERRANDMASTER("npcs bank")
-assert(messages[#messages-1]:find('Test Banker',1,true) and
+assert(messages[#messages-2]:find('Test Banker',1,true) and
   messages[#messages]:find('/em npcs find',1,true))
+SlashCmdList.ERRANDMASTER("npcs unsupported")
+for i=#messages-2,#messages do
+  assert(#messages[i]<=110, 'NPC help must be short enough for narrow game chat')
+  local body=messages[i]:match('ErrandMaster:|r (.*)')
+  assert(body and not body:find('|',1,true),
+    'literal pipe characters are parsed as formatting codes by WoW chat')
+end
 SlashCmdList.ERRANDMASTER("npc add 900")
 assert(addon.errands:All()[4].npcID==900 and addon.errands:All()[4].mapID==nil,
   'queued NPC uses the live provider locations, not a stale copied coordinate')

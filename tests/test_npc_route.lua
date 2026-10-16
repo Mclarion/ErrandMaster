@@ -46,4 +46,19 @@ local specific=addon.route:Plan({{id='fix',name='Repair gear',category='Repair',
   10,.1,.1,true,dual,nil,1000,1000)
 assert(specific[1] and specific[1].locationID=='repair-second',
   'an ID-specific errand must still honor the requested NPC service')
+addon.ProfessionFilters=function() return {'Alchemy'} end
+local trainers={
+  {id='mining',name='Mining Coach',category='Trainer',trainerGroup='Profession Trainer',
+    specialty='Mining Trainer',mapID=10,x=.101,y=.1},
+  {id='alchemy',name='Alchemy Coach',category='Trainer',trainerGroup='Profession Trainer',
+    specialty='Alchemy Trainer',mapID=10,x=.2,y=.1},
+}
+local profession=addon.route:Plan({{id='learn',name='Find teacher',
+  category='Profession Trainer'}},10,.1,.1,true,trainers,nil,1000,1000)
+assert(profession[1] and profession[1].locationID=='alchemy',
+  'profession search excludes a closer trainer for a different profession')
+local missing,unknown=addon.route:Plan({{id='learn',name='Find teacher',
+  category='Profession Trainer'}},10,.1,.1,true,{trainers[1]},nil,1000,1000)
+assert(#missing==0 and #unknown==1,
+  'no matching profession trainer remains deferred rather than switching professions')
 print('NPC candidate routing prefers observed connectivity over air distance')

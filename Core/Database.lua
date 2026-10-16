@@ -27,6 +27,11 @@ end
 local function validName(value)
   return validCategory(value) and not value:find("^%s*$")
 end
+local function professionName(value)
+  if not validName(value) then return end
+  local name=value:match("^%s*(.-)%s*$")
+  if #name>=2 then return name end
+end
 local function safeEntry(entry, child)
   if not plain(entry) or type(entry) ~= "table" or getmetatable(entry) then return nil end
   local kind = entry.type
@@ -98,7 +103,7 @@ local function fresh()
     optimize = true, useTomTom = true, defaultScope = "character", discoverServices = false,
     wheelRadius = 110, wheelIconSize = 46, wheelSlots = normalizeSlots(),
     wheelScale = 1, wheelTheme = "Azure", trailRecording = false,
-    routeMode = "observed",
+    routeMode = "observed", showDestinations = true,
   }}
 end
 
@@ -172,6 +177,9 @@ function db:Initialize(character)
   end
   if data.settings.optimize == nil then data.settings.optimize = true end
   if data.settings.useTomTom == nil then data.settings.useTomTom = true end
+  if type(data.settings.showDestinations) ~= "boolean" then
+    data.settings.showDestinations = true
+  end
   if type(data.settings.discoverServices) ~= "boolean" then data.settings.discoverServices = false end
   data.settings.trailRecording = false -- Obsolete account-wide flag cannot grant consent.
   if data.settings.routeMode ~= "observed" and data.settings.routeMode ~= "direct" then
@@ -185,8 +193,50 @@ function db:Initialize(character)
       data.settings.wheelIconSize % 1 ~= 0 then data.settings.wheelIconSize = 46 end
   if data.settings.defaultScope ~= "account" then data.settings.defaultScope = "character" end
   data.characters[character] = data.characters[character] or {}
+  local characterData=data.characters[character]
+  local normalized,seen={},{}
+  local saved=characterData.professionOverrides
+  if plain(saved) and type(saved)=="table" and not getmetatable(saved) then
+    for i=1,math.min(#saved,8) do
+      local name=professionName(saved[i])
+      if name and not seen[name:lower()] then
+        normalized[#normalized+1]=name; seen[name:lower()]=true
+      end
+    end
+  end
+  characterData.professionOverrides=normalized
   self.character = character
   self.data = data
+end
+
+function db:ProfessionOverrides()
+  local names=self.data.characters[self.character].professionOverrides
+  local output={}
+  for _,name in ipairs(names) do output[#output+1]=name end
+  return output
+end
+function db:AddProfession(value)
+  local name=professionName(value)
+  if not name then return false end
+  local names=self.data.characters[self.character].professionOverrides
+  if #names>=8 then return false end
+  for _,existing in ipairs(names) do
+    if existing:lower()==name:lower() then return false end
+  end
+  names[#names+1]=name
+  return true
+end
+function db:RemoveProfession(value)
+  local name=professionName(value)
+  if not name then return false end
+  local names=self.data.characters[self.character].professionOverrides
+  for i,existing in ipairs(names) do
+    if existing:lower()==name:lower() then table.remove(names,i); return true end
+  end
+  return false
+end
+function db:ClearProfessions()
+  self.data.characters[self.character].professionOverrides={}
 end
 
 local function validIndex(index, limit)

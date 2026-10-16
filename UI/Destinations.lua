@@ -22,8 +22,8 @@ end
 
 local function title(value)
   if not safe(value) or type(value) ~= "string" then return "Unnamed" end
-  if #value <= 38 then return value end
-  local cut = 38
+  if #value <= 28 then return value end
+  local cut = 28
   while cut > 0 do
     local byte = value:byte(cut + 1)
     if not byte or byte < 128 or byte > 191 then break end
@@ -60,6 +60,23 @@ local function append(list, entries, deferred)
         elseif deferred and number(map, 1, 10000000) then
           line = line .. string.format(" (map %.0f)", map)
         end
+        local checked,nearby,nearbyName,zone,distance=pcall(function()
+          local place=item.nearbyZoneCandidate
+          return place,place and place.name,place and place.zoneName,
+            place and place.directYards
+        end)
+        if deferred and checked and safe(nearby) and type(nearby)=="table" and
+            safe(nearbyName) and safe(zone) and number(distance,0,10000) then
+          line = "Nearby: " .. title(nearbyName) .. "\n" ..
+            title(zone) .. string.format(" ~%.0f yd direct; route unknown",distance)
+        end
+        local flightOK,flightNode=pcall(function() return item.taxiFlightNode end)
+        if deferred and flightOK and safe(flightNode) and
+            type(flightNode)=="string" and #flightNode<=80 and
+            not flightNode:find("[%c|]") then
+          line = "Fly: " .. title(flightNode) .. " (reachable)\n" ..
+            "Then: " .. title(name) .. "; walk unknown"
+        end
         list[#list+1] = line
       end
     end
@@ -69,21 +86,35 @@ end
 function destinations:Create()
   if self.frame then return self.frame end
   local panel = CreateFrame("Frame", "ErrandMasterDestinations", UIParent, "BasicFrameTemplateWithInset")
-  panel:SetSize(460, 278)
-  panel:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+  panel:SetSize(328, 390)
+  panel:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -24, -130)
   panel:SetMovable(true)
   panel:EnableMouse(true)
   panel:RegisterForDrag("LeftButton")
   panel:SetClampedToScreen(true)
   panel:SetScript("OnDragStart", function(frame) frame:StartMoving() end)
   panel:SetScript("OnDragStop", function(frame) frame:StopMovingOrSizing() end)
+  local closeButton=panel.CloseButton
+  if (type(closeButton)=="table" or type(closeButton)=="userdata") and
+      type(closeButton.HookScript)=="function" then
+    closeButton:HookScript("OnClick", function()
+      if addon.db and addon.db.data then
+        addon.db.data.settings.showDestinations = false
+      end
+    end)
+  end
+  panel.TitleText:SetText("ErrandMaster targets")
   local heading = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   heading:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -30)
-  heading:SetText("ErrandMaster destinations (straight-line estimates)")
+  heading:SetText("Observed paths / direct estimates")
   self.rows = {}
   for i = 1, ROWS do
     local row = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row:SetPoint("TOPLEFT", panel, "TOPLEFT", 18, -48 - (i-1)*22)
+    row:SetPoint("TOPLEFT", panel, "TOPLEFT", 18, -53 - (i-1)*40)
+    row:SetWidth(290)
+    row:SetHeight(38)
+    row:SetJustifyH("LEFT")
+    row:SetJustifyV("TOP")
     self.rows[i] = row
   end
   local prev = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
@@ -137,10 +168,20 @@ function destinations:Open()
   self:Create()
   self:Refresh()
   self.frame:Show()
+  if addon.db and addon.db.data then addon.db.data.settings.showDestinations = true end
   return true
 end
 
 function destinations:Toggle()
-  if self.frame and self.frame:IsShown() then self.frame:Hide(); return false end
+  if self.frame and self.frame:IsShown() then
+    self.frame:Hide()
+    if addon.db and addon.db.data then addon.db.data.settings.showDestinations = false end
+    return false
+  end
+  return self:Open()
+end
+function destinations:Restore()
+  if addon.db and addon.db.data and
+      addon.db.data.settings.showDestinations == false then return false end
   return self:Open()
 end

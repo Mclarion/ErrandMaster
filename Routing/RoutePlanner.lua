@@ -60,10 +60,20 @@ function route:Plan(errands, mapID, x, y, optimize, locations, questPOIs, width,
           local class = addon.discovery and addon.discovery:PlayerClass()
           wanted = class and class .. " Trainer"
         end
+        local professions = wanted == "Profession Trainer" and
+          addon.ProfessionFilters and addon:ProfessionFilters() or nil
         if canLocate and mapID and not item.mapID and type(wanted) == "string" and locations then
           for _, place in ipairs(locations) do
+            local professionMatch=not professions or #professions==0
+            if not professionMatch and type(place.specialty)=="string" then
+              for _,profession in ipairs(professions) do
+                if place.specialty:lower()==(profession.." Trainer"):lower() then
+                  professionMatch=true; break
+                end
+              end
+            end
             if place.mapID == mapID and type(place.category) == "string" and
-                (not item.npcID or place.npcID == item.npcID) and wanted and
+                professionMatch and (not item.npcID or place.npcID == item.npcID) and wanted and
                   (place.category:lower() == wanted:lower() or
                     (place.specialty and place.specialty:lower() == wanted:lower()) or
                     (place.trainerGroup and place.trainerGroup:lower() == wanted:lower()) or

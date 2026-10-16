@@ -14,14 +14,30 @@ local function fails(fn) assert(not pcall(fn), "expected invalid input to fail")
 ErrandMasterDB = nil
 addon.db:Initialize("Test-Realm")
 assert(ErrandMasterDB.schema == 5 and ErrandMasterDB.settings.discoverServices == false)
+assert(ErrandMasterDB.settings.showDestinations == true,
+  'a new character starts with the separate target tracker visible')
 assert(ErrandMasterDB.settings.trailRecording == false and
   ErrandMasterDB.settings.routeMode == "observed")
 assert(#ErrandMasterDB.settings.wheelSlots == 7)
 assert(ErrandMasterDB.settings.wheelSlots[1].category == "Repair")
 assert(ErrandMasterDB.settings.wheelSlots[7].category == "Custom")
 ErrandMasterDB.settings.wheelSlots[2] = {type="spell", id=12345}
+ErrandMasterDB.settings.showDestinations = false
 addon.db:Initialize("Other-Realm")
 assert(ErrandMasterDB.settings.wheelSlots[2].id == 12345, "wheel slots are account-wide")
+assert(ErrandMasterDB.settings.showDestinations == false,
+  'an intentionally hidden tracker remains hidden after reinitialization')
+assert(#addon.db:ProfessionOverrides()==0)
+assert(addon.db:AddProfession('Alchemy') and addon.db:AddProfession('Mining'))
+assert(not addon.db:AddProfession('Alchemy') and not addon.db:AddProfession('Bad|Name'))
+assert(#addon.db:ProfessionOverrides()==2)
+assert(addon.db:RemoveProfession('Mining') and #addon.db:ProfessionOverrides()==1)
+addon.db:Initialize('Test-Realm')
+assert(#addon.db:ProfessionOverrides()==0, 'profession overrides are character-scoped')
+addon.db:Initialize('Other-Realm')
+assert(addon.db:ProfessionOverrides()[1]=='Alchemy')
+addon.db:ClearProfessions()
+assert(#addon.db:ProfessionOverrides()==0)
 addon.db:Initialize("Test-Realm")
 local legacy = {schema=2, nextId=1, nextLocationId=1, account={}, characters={},
   locations={}, settings={wheelRadius=110, wheelIconSize=46}}

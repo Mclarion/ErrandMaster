@@ -271,16 +271,32 @@ end
 local function nearestPreview(category, map, x, y, width, height)
   if not quickServices[category] or not addon.npcs or
       not addon.npcs:IsReady() then return end
+  local searches={category}
   if category == "Class Trainer" then
     local class = addon.discovery and addon.discovery:PlayerClass()
     if not safeLabel(class) then return end
-    category = class .. " Trainer"
+    searches={class .. " Trainer"}
+  elseif category == "Profession Trainer" and addon.ProfessionFilters then
+    local names=addon:ProfessionFilters()
+    if #names>0 then
+      searches={}
+      for _,name in ipairs(names) do searches[#searches+1]=name.." Trainer" end
+    end
   end
-  local ok, matches = pcall(addon.npcs.Nearest,addon.npcs,
-    map,x,y,category,width,height,1)
-  if not ok or not usable(matches) or type(matches)~="table" or
-      not usable(matches[1]) or type(matches[1])~="table" then return end
-  local name, yards = matches[1].name, matches[1].directYards
+  local nearest
+  for _,wanted in ipairs(searches) do
+    local ok, matches = pcall(addon.npcs.Nearest,addon.npcs,
+      map,x,y,wanted,width,height,1)
+    if ok and usable(matches) and type(matches)=="table" and
+        usable(matches[1]) and type(matches[1])=="table" then
+      local candidate=matches[1]
+      if not nearest or (type(candidate.directYards)=="number" and
+          (type(nearest.directYards)~="number" or
+           candidate.directYards<nearest.directYards)) then nearest=candidate end
+    end
+  end
+  if not nearest then return end
+  local name, yards = nearest.name, nearest.directYards
   if not safeLabel(name) then return end
   local label=name:sub(1,20)
   if #name>20 then label=label.."..." end
@@ -771,7 +787,28 @@ function wheel:RefreshSettings()
     settings.wheelRadius, settings.wheelIconSize, settings.wheelScale or 1,
     settings.wheelTheme or "Azure"))
   self.bindingLabel:SetText(self:BindingText())
+  if self.professionStatus and addon.ProfessionFilters then
+    local names,source=addon:ProfessionFilters()
+    local label=#names>0 and table.concat(names, ", ") or "not detected; add manually"
+    if #label>48 then label=label:sub(1,45).."..." end
+    self.professionStatus:SetText("Professions ("..source.."): "..label)
+  end
   self:RefreshEditor()
+end
+function wheel:ChangeProfession(mode)
+  if not outOfCombat() then self:Notice("Change professions out of combat."); return end
+  if mode=="auto" then addon.db:ClearProfessions()
+  else
+    local ok,name=pcall(self.professionInput.GetText,self.professionInput)
+    if not ok or not safeLabel(name) then
+      self:Notice("Enter a profession name first."); return
+    end
+    local changed=mode=="add" and addon.db:AddProfession(name) or
+      addon.db:RemoveProfession(name)
+    if not changed then self:Notice("Profession unchanged; check name or duplicate."); return end
+  end
+  self:RefreshSettings()
+  addon:Refresh()
 end
 function wheel:FitSettings()
   if not self.settingsFrame then return end
@@ -845,6 +882,15 @@ function wheel:ShowSettings()
         end
       end
     end)
+    caption(frame, "Trainer filter (per character; manual overrides auto)", 383, -45)
+    self.professionStatus = caption(frame, "", 383, -67)
+    self.professionInput = edit(frame, "Profession name (e.g. Alchemy)", 383, -94, 176, 40)
+    self.professionAddButton = control(frame, "Add", 577, -111, 84,
+      function() wheel:ChangeProfession("add") end)
+    self.professionRemoveButton = control(frame, "Remove", 577, -141, 84,
+      function() wheel:ChangeProfession("remove") end)
+    self.professionAutoButton = control(frame, "Use auto detection", 383, -164, 176,
+      function() wheel:ChangeProfession("auto") end)
     self.editorLabel = caption(frame, "", 22, -211)
     caption(frame, "Click #2 for Move/Remove. Drag to reorder; hold 0.45s to folder.", 22, -233)
     self.editorRows = {}

@@ -1,12 +1,19 @@
-local addon = {}
+local addon = {db={data={settings={showDestinations=true}}}}
 local frames = {}
 local function frame(parent)
   local f = {parent=parent, scripts={}, shown=false}
   function f:SetSize(w,h) self.width,self.height=w,h end
+  function f:SetWidth(w) self.width=w end
+  function f:SetHeight(h) self.height=h end
+  function f:SetJustifyH(value) self.justifyH=value end
+  function f:SetJustifyV(value) self.justifyV=value end
   function f:SetPoint(...) self.point={...} end
   function f:ClearAllPoints() self.point=nil end
   function f:SetText(text) self.text=text end
   function f:SetScript(event, fn) self.scripts[event]=fn end
+  function f:HookScript(event, fn)
+    self.hooks=self.hooks or {}; self.hooks[event]=fn
+  end
   function f:Show() self.shown=true end
   function f:Hide() self.shown=false end
   function f:IsShown() return self.shown end
@@ -21,17 +28,37 @@ local function frame(parent)
   return f
 end
 UIParent=frame()
-CreateFrame=function(_,_,parent) return frame(parent) end
+CreateFrame=function(_,_,parent,template)
+  local result=frame(parent)
+  if template=='BasicFrameTemplateWithInset' then
+    result.TitleText=frame(result)
+    result.CloseButton=frame(result)
+  end
+  return result
+end
 InCombatLockdown=function() return false end
 local planned, displayMap = 0, nil
 local ordered, deferred = {}, {}
 addon.Plan=function(_, map) planned=planned+1; displayMap=map; return ordered,deferred,42,.2,.4 end
 local chunk=assert(loadfile('UI/Destinations.lua')); chunk('ErrandMaster',addon)
 assert(type(addon.destinations.Open)=='function')
-assert(addon.destinations:Open())
+assert(type(addon.destinations.Restore)=='function' and addon.destinations:Restore(),
+  'target tracker opens by default on login')
 assert(planned==1 and displayMap==nil, 'standalone list plans for the player map')
 local window=addon.destinations.frame
 assert(window.parent==UIParent and window.clamped and window.movable)
+assert(window.point[1]=='TOPRIGHT' and window.width<=340,
+  'own compact tracker starts on the right, away from RestedXP')
+assert(addon.destinations.rows[1].width and addon.destinations.rows[1].width<=300,
+  'tracker rows wrap inside the available width')
+assert(window.CloseButton.hooks and window.CloseButton.hooks.OnClick,
+  'native template close button saves the visibility choice')
+window:Hide() -- The inherited close handler hides its parent frame.
+window.CloseButton.hooks.OnClick(window.CloseButton)
+assert(not addon.db.data.settings.showDestinations and
+  not addon.destinations:Restore(), 'closing with X persists across login')
+addon.destinations:Open()
+assert(window:IsShown() and addon.db.data.settings.showDestinations)
 assert(window.dragButtons[1]=='LeftButton')
 window.scripts.OnDragStart(window)
 assert(window.moving)
@@ -65,7 +92,8 @@ addon.destinations:Refresh()
 assert(addon.destinations.rows[1].text:find('Fresh',1,true) and
   not addon.destinations.nextButton.shown, 'refresh clamps stale page')
 addon.destinations:Toggle()
-assert(not window.shown)
+assert(not window.shown and not addon.db.data.settings.showDestinations)
+assert(not addon.destinations:Restore(), 'an intentionally hidden tracker stays hidden')
 addon.destinations:Toggle()
-assert(window.shown)
+assert(window.shown and addon.db.data.settings.showDestinations)
 print('destinations tests passed')

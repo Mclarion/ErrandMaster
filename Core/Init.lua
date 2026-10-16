@@ -45,6 +45,28 @@ function addon:MapWorldSize(mapID)
       width > 10000000 or height > 10000000 then return end
   return width, height
 end
+function addon:ProfessionFilters()
+  local manual=self.db:ProfessionOverrides()
+  if #manual>0 then return manual,"manual" end
+  if not safe(GetProfessions) or type(GetProfessions)~="function" or
+      not safe(GetProfessionInfo) or type(GetProfessionInfo)~="function" then
+    return {},"unavailable"
+  end
+  local call={pcall(GetProfessions)}
+  if not call[1] then return {},"unavailable" end
+  local result,seen={},{}
+  for i=2,7 do
+    local index=call[i]
+    if safe(index) and type(index)=="number" and index>=1 and index%1==0 then
+      local ok,name=pcall(GetProfessionInfo,index)
+      if ok and safe(name) and type(name)=="string" and #name>=2 and
+          #name<=40 and not name:find("[%c|]") and not seen[name:lower()] then
+        result[#result+1]=name; seen[name:lower()]=true
+      end
+    end
+  end
+  return result,#result>0 and "auto" or "unavailable"
+end
 function addon:Plan(displayMap)
   local map, x, y = self:Position()
   if displayMap ~= nil then
@@ -80,6 +102,59 @@ function addon:Plan(displayMap)
   local ordered, deferred = self.route:Plan(self.errands:All(), map, x, y,
     settings.optimize, locations, self.quests:OnMap(map), width, height,
     walkContext)
+  if self.taxiAdvice and self.taxiAdvice.open then
+    for i,item in ipairs(deferred) do
+      if item.mapID and item.mapID~=map then
+        local node=self.taxiAdvice:ForMap(item.mapID)
+        if node then
+          local hint={}
+          for key,value in pairs(item) do hint[key]=value end
+          hint.taxiFlightNode=node
+          deferred[i]=hint
+        end
+      end
+    end
+  end
+  if map and x and y and self.zoneSearch and self.npcs and
+      self.npcs:IsReady() and #deferred>0 then
+    local cache={}
+    for i,item in ipairs(deferred) do
+      if not item.mapID and not item.npcID and type(item.category)=="string" then
+        local wanted=item.category
+        if wanted=="Class Trainer" then
+          local class=self.discovery:PlayerClass()
+          wanted=class and class.." Trainer"
+        end
+        if wanted and cache[wanted]==nil then
+          local filters={wanted}
+          if wanted=="Profession Trainer" then
+            local names=self:ProfessionFilters()
+            if #names>0 then
+              filters={}
+              for _,name in ipairs(names) do
+                filters[#filters+1]=name.." Trainer"
+              end
+            end
+          end
+          local best
+          for _,filter in ipairs(filters) do
+            local ok,matches=pcall(self.zoneSearch.Nearby,self.zoneSearch,
+              map,x,y,filter,2000,1)
+            local candidate=ok and matches and matches[1]
+            if candidate and (not best or
+                candidate.directYards<best.directYards) then best=candidate end
+          end
+          cache[wanted]=best or false
+        end
+        if wanted and cache[wanted] then
+          local hint={}
+          for key,value in pairs(item) do hint[key]=value end
+          hint.nearbyZoneCandidate=cache[wanted]
+          deferred[i]=hint
+        end
+      end
+    end
+  end
   return ordered, deferred, map, x, y
 end
 function addon:Refresh()
@@ -87,6 +162,49 @@ function addon:Refresh()
   if self.worldMap then self.worldMap:Refresh() end
   if self.destinations then self.destinations:Refresh() end
   self:RevalidateNavigation()
+end
+function addon:MovementTick()
+  local taxiKnown, taxi = false, false
+  if safe(UnitOnTaxi) and type(UnitOnTaxi) == "function" then
+    local ok, value = pcall(UnitOnTaxi, "player")
+    if ok and safe(value) and type(value) == "boolean" then
+      taxiKnown, taxi = true, value
+    end
+  end
+  if taxiKnown and taxi then
+    self.movementTaxi = true
+    self.movementOrigin = nil
+    return false
+  end
+  if self.movementTaxi then
+    if not taxiKnown then return false end
+    local map, x, y = self:Position()
+    if not map or not x or not y then return false end
+    self.movementTaxi = false
+    self.movementOrigin = {map=map,x=x,y=y}
+    self:Refresh() -- A landing may move the player even without a zone event.
+    return true
+  end
+  local map, x, y = self:Position()
+  if not map or not x or not y then
+    self.movementOrigin = nil
+    return false
+  end
+  local prior = self.movementOrigin
+  self.movementOrigin = prior or {map=map, x=x, y=y}
+  if not prior then return false end
+  if prior.map ~= map then
+    self.movementOrigin = {map=map, x=x, y=y}
+    self:Refresh()
+    return true
+  end
+  local width, height = self:MapWorldSize(map)
+  if not width then return false end -- No yard scale means no honest 50-yard test.
+  local dx, dy = (x-prior.x)*width, (y-prior.y)*height
+  if dx*dx + dy*dy < 2500 then return false end
+  self.movementOrigin = {map=map, x=x, y=y}
+  self:Refresh()
+  return true
 end
 function addon:RevalidateNavigation(ordered)
   -- Recheck only the waypoint owned by ErrandMaster; other TomTom pins are untouched.
@@ -160,7 +278,7 @@ function addon:Command(message)
     self.ui.frame:Show(); self.ui.name:SetFocus()
   elseif command == "settings" then
     self.ui.frame:Show()
-    self:Print("Window settings plus /em trails on|off and /em walking on|off.")
+    self:Print("Window settings plus /em trails on/off and /em walking on/off.")
   elseif command == "route" then
     local ordered, deferred = self:Plan()
     local observed = self.db.data.settings.routeMode == "observed"
@@ -184,7 +302,7 @@ function addon:Command(message)
         "Observed-walk routing on; unknown paths stay unknown." or
         "Direct-distance estimates on; these are not walkable routes.")
     elseif argument ~= "on" and argument ~= "off" then
-      self:Print("Use /em walking status|on|off. Off enables straight-line estimates, not walking directions.")
+      self:Print("Use /em walking status, on, or off. Off enables direct estimates, not walking directions.")
     else
       self.db.data.settings.routeMode = argument == "on" and "observed" or "direct"
       self:Refresh()
@@ -219,7 +337,7 @@ function addon:Command(message)
       else
         self:Print("Ground-movement observation " .. argument .. ".")
       end
-    else self:Print("Use /em trails status|on|off|clear|confirm. Recording is per character and off by default.") end
+    else self:Print("Use /em trails status, on, off, clear, or confirm. Recording is per character and off by default.") end
   elseif command == "next" then self:NavigateNext()
   elseif command == "map" then
     if not self.worldMap or not self.worldMap:Open() then
@@ -318,8 +436,10 @@ function addon:Command(message)
           local class=self.discovery:PlayerClass()
           wanted=class and class.." Trainer" or nil
         end
-        if argument and argument~="" and not wanted then
-          self:Print("Use /em npcs [bank|repair|vendor|trainer|auction|flight|innkeeper|class|profession], class <name>, profession <name>, near <filter>, find <name>, or status.")
+        if argument and argument~="" and argument~="all" and not wanted then
+          self:Print("NPCs: /em npcs bank, repair, vendor, trainer, auction, flight, innkeeper")
+          self:Print("NPCs: /em npcs class <name>, profession <name>, near <service>")
+          self:Print("NPCs: /em npcs find <text>, status, all; add: /em npc add <id>")
         elseif nearest and not x then
           self:Print("Nearest NPCs need a readable current-map position.")
         else
@@ -335,7 +455,8 @@ function addon:Command(message)
               place.directYards and string.format(" ~%.0f yd direct",place.directYards) or "",
               place.phaseUnverified and " phase unverified" or ""))
           end
-          self:Print("Search names/subtitles with /em npcs find <text>; filter with /em npcs class <name> or profession <name>.")
+          self:Print("Filter with /em npcs class <name> or profession <name>.")
+          self:Print("Search names/subtitles with /em npcs find <text>.")
         end
       end
     end
@@ -388,7 +509,9 @@ function addon:Command(message)
     self.db.data.settings.debug = not self.db.data.settings.debug
     self:Print("Debug logging " .. (self.db.data.settings.debug and "on" or "off") .. ".")
   elseif command == "help" then
-    self:Print("/em, add, map, list, pin <name>, quests, quest <id>, route, optimize, next, walking on|off, trails on|off, settings, wheel, wheel settings, discover on|off, poi <category>, locations, forget <id>, debug, help")
+    self:Print("/em, add, map, list, pin <name>, quests, quest <id>, route, optimize, next")
+    self:Print("walking on/off, trails on/off, discover on/off, settings, wheel")
+    self:Print("wheel settings, poi <category>, locations, forget <id>, debug, help")
   else self:Print("Unknown command. Type /em help.") end
 end
 local events = CreateFrame("Frame")
@@ -407,6 +530,7 @@ local function initialize()
       addon:Print("Trail storage is unavailable; its saved data was preserved. Other features remain available.")
     end
     addon.ui:Create()
+    if addon.destinations then addon.destinations:Restore() end
     if addon.minimap then addon.minimap:Attach() end
     if addon.worldMap then addon.worldMap:Attach() end
     SLASH_ERRANDMASTER1 = "/em"
@@ -414,6 +538,10 @@ local function initialize()
     events:RegisterEvent("ZONE_CHANGED_NEW_AREA")
     events:RegisterEvent("PLAYER_ENTERING_WORLD")
     events:RegisterEvent("PLAYER_REGEN_ENABLED")
+    for _,event in ipairs({"TAXIMAP_OPENED","TAXIMAP_CLOSED",
+        "TAXI_NODE_STATUS_CHANGED"}) do
+      pcall(events.RegisterEvent,events,event)
+    end
     pcall(events.RegisterEvent, events, "QUEST_LOG_UPDATE")
     pcall(events.RegisterEvent, events, "QUEST_POI_UPDATE")
     pcall(events.RegisterEvent, events, "QUEST_WATCH_UPDATE")
@@ -421,7 +549,7 @@ local function initialize()
         "BANKFRAME_OPENED", "TRAINER_SHOW"}) do
       pcall(events.RegisterEvent, events, event) -- Optional service events must not block startup.
     end
-    local elapsed = 0
+    local elapsed, movementElapsed = 0, 0
     events:SetScript("OnUpdate", function(_, dt)
       if not addon.db.data then elapsed = 0; return end
       if addon.npcs and addon.npcs.state == "indexing" then
@@ -431,11 +559,19 @@ local function initialize()
           addon:Print(addon.npcs.reason)
         elseif done then addon:Refresh() end
       end
+      if type(dt) ~= "number" or dt ~= dt or dt < 0 or dt > 10 then return end
+      movementElapsed = movementElapsed + dt
+      if movementElapsed >= .5 then
+        movementElapsed = 0
+        if #addon.errands:All() > 0 then
+          local ok, err = pcall(addon.MovementTick, addon)
+          if not ok and addon.db.data.settings.debug then addon:Print("Movement: " .. tostring(err)) end
+        else addon.movementOrigin = nil end
+      end
       local recording = addon.trails and addon.trails:IsEnabled()
       if not recording and not addon.navigation.handle then
         elapsed = 0; return
       end
-      if type(dt) ~= "number" or dt ~= dt or dt < 0 or dt > 10 then return end
       elapsed = elapsed + dt
       if elapsed >= 2 then
         elapsed = 0
@@ -460,6 +596,14 @@ events:SetScript("OnEvent", function(_, event, name)
     if addon.worldMap then addon.worldMap:Attach() end
   elseif event == "PLAYER_LOGIN" and addon.loaded and not addon.ui.frame then
     initialize()
+  elseif addon.db.data and (event=="TAXIMAP_OPENED" or
+      event=="TAXI_NODE_STATUS_CHANGED") and addon.taxiAdvice then
+    local ok=pcall(addon.taxiAdvice.Capture,addon.taxiAdvice)
+    if not ok then addon.taxiAdvice:Clear() end
+    addon:Refresh()
+  elseif addon.db.data and event=="TAXIMAP_CLOSED" and addon.taxiAdvice then
+    addon.taxiAdvice:Clear()
+    addon:Refresh()
   elseif addon.db.data and (event == "MERCHANT_SHOW" or event == "MAIL_SHOW" or
       event == "AUCTION_HOUSE_SHOW" or event == "BANKFRAME_OPENED" or
       event == "TRAINER_SHOW") then
@@ -468,6 +612,9 @@ events:SetScript("OnEvent", function(_, event, name)
   elseif addon.db.data and (event == "ZONE_CHANGED_NEW_AREA" or
       event == "PLAYER_ENTERING_WORLD" or event == "QUEST_LOG_UPDATE" or
       event == "QUEST_POI_UPDATE" or event == "QUEST_WATCH_UPDATE") then
+    if event=="PLAYER_ENTERING_WORLD" and addon.taxiAdvice then
+      addon.taxiAdvice:Clear()
+    end
     addon.quests:Invalidate()
     addon:Refresh()
   elseif event == "PLAYER_REGEN_ENABLED" and addon.db.data and addon.worldMap then
