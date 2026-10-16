@@ -35,6 +35,27 @@ addon.Print = function(_, value) printed[#printed+1] = value end
 local chunk = assert(loadfile("UI/RadialMenu.lua")); chunk("ErrandMaster", addon)
 local wheel = addon.radial
 assert(wheel:Open() and wheel.frame:IsShown())
+UnitClass = function() return "Hunter", "HUNTER" end
+wheel:Layout()
+assert(wheel.slots[2].texture.texture:find("Textures\\Bank.blp", 1, true))
+assert(wheel.slots[6].texture.texture:find("Textures\\ClassHunter.blp", 1, true))
+assert(wheel.slots[6].label.text == "Hunter Trainer")
+addon.Position=function() return 10,.1,.1 end
+addon.MapWorldSize=function() return 1000,1000 end
+addon.discovery={PlayerClass=function() return 'Hunter' end}
+addon.npcs={IsReady=function() return true end,
+  Nearest=function(_,map,x,y,wanted)
+    assert(map==10 and x==.1 and y==.1)
+    if wanted=='Bank' then return {{name='Banker One',directYards=40}} end
+    if wanted=='Hunter Trainer' then return {{name='Hunter Tutor',directYards=55}} end
+    return {}
+  end}
+wheel:Layout()
+assert(wheel.slots[2].label.text:find('Banker One',1,true) and
+  wheel.slots[6].label.text:find('Hunter Tutor',1,true))
+wheel:SetSelection(2)
+assert(wheel.centerLabel.text:find('~40 yd direct',1,true))
+addon.npcs=nil
 assert(wheel.centerX == 960 and wheel.centerY == 540)
 assert(#cursorCalls == 1 and cursorCalls[1]:find("ErrandMaster",1,true))
 mouseY = 650; wheel.frame.scripts.OnUpdate(wheel.frame)
@@ -68,8 +89,42 @@ for i, category in ipairs(expected) do
   wheel.frame.scripts.OnUpdate(wheel.frame)
   assert(wheel.selected == i+1, "incorrect highlighted wheel category")
   wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
-  assert(opened[#opened] == category and not wheel.frame:IsShown())
+  if category == "Vendor" then
+    assert(wheel.frame:IsShown() and wheel.submenu == "vendor")
+    wheel:Close()
+  else
+    assert(opened[#opened] == category and not wheel.frame:IsShown())
+  end
 end
+local queued = {}
+addon.errands = {
+  All=function() return queued end,
+  Add=function(_, details)
+    queued[#queued+1] = details
+    return details
+  end,
+}
+addon.Refresh = function() end
+mouseX, mouseY = 960, 540
+assert(wheel:Open()); mouseY = 650
+wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
+assert(#queued == 1 and queued[1].category == "Repair" and
+  queued[1].origin == "suggested" and queued[1].scope == "character")
+assert(wheel:Open()); mouseY = 650
+wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
+assert(#queued == 1, "a repeat selection must not add duplicate pending errands")
+mouseX, mouseY = 960, 540
+assert(wheel:Open())
+local vendorAngle = math.pi/2 - 4*2*math.pi/7
+mouseX, mouseY = 960 + 110*math.cos(vendorAngle), 540 + 110*math.sin(vendorAngle)
+wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
+assert(wheel.submenu == "vendor" and wheel.frame:IsShown())
+local ammoAngle = math.pi/2 - 2*math.pi/7
+mouseX = wheel.centerX + 110*math.cos(ammoAngle)
+mouseY = wheel.centerY + 110*math.sin(ammoAngle)
+wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
+assert(#queued == 2 and queued[2].category == "Ammo Vendor" and not wheel.frame:IsShown())
+addon.errands = nil
 mouseX, mouseY = 960, 540
 local currentKey
 GetBindingKey = function() return currentKey end
@@ -81,12 +136,43 @@ SetBinding = function(key, action)
 end
 GetCurrentBindingSet = function() return 1 end
 SaveBindings = function() end -- Native API has no documented success return.
+IsShiftKeyDown = function() return false end
+IsControlKeyDown = function() return false end
+IsAltKeyDown = function() return false end
 wheel:ShowSettings()
 assert(wheel.settingsFrame:IsShown())
 wheel.bindButton.scripts.OnClick(wheel.bindButton)
 wheel.capture.scripts.OnKeyDown(wheel.capture, "F7")
 assert(wheel.bindingLabel.text:find("F7",1,true))
 assert(not wheel.capture:IsShown())
+-- Mouse clicks must enter the same native binding path, not cancel capture.
+wheel.bindButton.scripts.OnClick(wheel.bindButton)
+wheel.capture.scripts.OnMouseDown(wheel.capture, "Button4")
+assert(currentKey == "BUTTON4" and not wheel.capture:IsShown())
+assert(wheel.bindingLabel.text:find("BUTTON4", 1, true))
+wheel.bindButton.scripts.OnClick(wheel.bindButton)
+wheel.capture.scripts.OnKeyDown(wheel.capture, "F7")
+assert(currentKey == "F7" and not wheel.capture:IsShown())
+issecretvalue = function(value) return value == "secret-modifier" end
+IsShiftKeyDown = function() return "secret-modifier" end
+IsControlKeyDown = function() return false end
+IsAltKeyDown = function() return false end
+wheel.bindButton.scripts.OnClick(wheel.bindButton)
+local protected, protectedError = pcall(wheel.capture.scripts.OnMouseDown,
+  wheel.capture, "Button5")
+assert(protected, tostring(protectedError))
+assert(currentKey == "F7" and not wheel.capture:IsShown())
+assert(wheel.status.text:find("Modifier state unavailable", 1, true))
+issecretvalue = nil
+IsShiftKeyDown = nil
+wheel.bindButton.scripts.OnClick(wheel.bindButton)
+assert(pcall(wheel.capture.scripts.OnMouseDown, wheel.capture, "Button5"))
+assert(currentKey == "F7" and not wheel.capture:IsShown())
+IsShiftKeyDown = function() error("protected modifier") end
+wheel.bindButton.scripts.OnClick(wheel.bindButton)
+assert(pcall(wheel.capture.scripts.OnMouseDown, wheel.capture, "Button5"))
+assert(currentKey == "F7" and not wheel.capture:IsShown())
+IsShiftKeyDown = function() return false end
 local bindingLookup = GetBindingAction
 GetBindingAction = function(key)
   if key == "F8" then return "MOVEFORWARD" end

@@ -1,3 +1,5 @@
 .testdeps/
 .venv/
 *.zip
+__pycache__/
+tools/

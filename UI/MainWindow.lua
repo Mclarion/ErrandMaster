@@ -51,7 +51,7 @@ function ui:Create()
   self.zone = label(frame, "", 18, -35)
   self.message = label(frame, "", 18, -555)
   self.rows = {}
-  label(frame, "Same-map route (straight-line estimate; not travel time)", 18, -61)
+  label(frame, "Same-map route (observed segments or labeled direct estimates)", 18, -61)
   for i = 1, 8 do
     local row = button(frame, "", 18, -77 - (i-1)*31, 420, function()
       local item = ui.visible[i]
@@ -127,6 +127,9 @@ function ui:Create()
   end)
   self.mapButton = button(frame, "Map destinations", 190, -509, 155,
     function() addon:Command("map") end)
+  self.npcButton = button(frame, "NPCs", 355, -509, 88,
+    function() addon:Command("npcs") end)
+  self.npcStatus = label(frame, "NPC catalog: loading", 466, -535)
   self:Refresh()
 end
 function ui:Notice(message)
@@ -189,15 +192,29 @@ function ui:Refresh()
   local map, x, y = addon:Position()
   local zone = GetZoneText and GetZoneText() or "Unknown zone"
   self.zone:SetText(string.format("Zone: %s | Map: %s | Order: %s | New scope: %s | TomTom: %s",
-    tostring(zone), tostring(map or "unknown"), addon.db.data.settings.optimize and "automatic" or "manual",
+    tostring(zone), tostring(map or "unknown"),
+    addon.db.data.settings.routeMode == "observed" and "observed walk" or "direct estimate",
     addon.db.data.settings.defaultScope, addon.db.data.settings.useTomTom and "on" or "off"))
   self.discoveryButton:SetText("Discover services: " ..
     (addon.db.data.settings.discoverServices and "on" or "off"))
+  if self.npcStatus and addon.npcs then
+    local status=addon.npcs:Status()
+    self.npcStatus:SetText(status.state=="ready" and
+      (status.limited and "NPC catalog: incomplete" or "NPC catalog: ready") or
+      (status.state=="indexing" and
+        string.format("NPC catalog: %d/%d",status.processed,status.total) or
+        "NPC catalog: unavailable"))
+  end
   local active, deferred = addon:Plan()
   self.visible = {}
   local entries = {}
-  for _, item in ipairs(active) do entries[#entries+1] = {item=item, status="Route"} end
-  for _, item in ipairs(deferred) do entries[#entries+1] = {item=item, status="Unrouted"} end
+  for _, item in ipairs(active) do
+    entries[#entries+1] = {item=item, status=item.walkStatus == "partial-route" and
+      "Partial" or (item.walkStatus == "known-route" and "Observed" or "Direct")}
+  end
+  for _, item in ipairs(deferred) do
+    entries[#entries+1] = {item=item, status=item.walkStatus == "unknown-route" and "Unknown" or "Deferred"}
+  end
   local completed = 0
   for _, item in ipairs(addon.errands:All()) do
     if item.completed then entries[#entries+1] = {item=item, status="Done"}; completed=completed+1 end
@@ -211,14 +228,20 @@ function ui:Refresh()
       row:SetText(string.format("%s  [%s] %s  %s%s", item.id == self.selected and ">" or " ", entry.status,
         item.name, item.x and string.format("(%s%.1f, %.1f)",
           item.approximate and "~" or "", item.x*100, item.y*100) or "(no position)",
-        item.directYards and string.format(" ~%.0f yd direct", item.directYards) or ""))
+        item.walkYards and string.format(" %.0f yd observed%s", item.walkYards,
+          item.walkStatus == "partial-route" and " (endpoint unknown)" or "") or
+          (item.directYards and string.format(" ~%.0f yd direct", item.directYards) or "")))
       row:Show()
     else row:Hide() end
   end
-  self.summary:SetText(string.format("%d routed | %d unrouted | %d done | page %d/%d%s",
-    #active, #deferred, completed, self.page, math.max(1, math.ceil(#entries/8)),
-    active[#active] and active[#active].cumulativeYards and
-      string.format(" | ~%.0f yd direct total", active[#active].cumulativeYards) or ""))
+  self.summary:SetText(string.format("%d %s | %d deferred/unknown | %d done | page %d/%d%s",
+    #active, addon.db.data.settings.routeMode == "observed" and
+      "observed/partial segments" or "direct estimates",
+    #deferred, completed, self.page, math.max(1, math.ceil(#entries/8)),
+    active[#active] and (active[#active].cumulativeWalkYards and
+      string.format(" | %.0f yd observed total", active[#active].cumulativeWalkYards) or
+      (active[#active].cumulativeYards and
+        string.format(" | ~%.0f yd direct total", active[#active].cumulativeYards) or "")) or ""))
   local chosen = self.selected and addon.errands:Get(self.selected)
   self.selectedText:SetText(chosen and (chosen.name .. " [" .. chosen.scope .. "]") or "None")
 end

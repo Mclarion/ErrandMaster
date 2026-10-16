@@ -68,6 +68,9 @@ function errands:Update(id, changes)
     assert(fields[key] or key == "clearLocation", "field cannot be edited: " .. tostring(key))
     if fields[key] then candidate[key] = value end
   end
+  if changes.name ~= nil and candidate.origin == "suggested" then
+    candidate.origin = "manual" -- An explicit name edit overrides automatic NPC naming.
+  end
   if changes.clearLocation then candidate.mapID, candidate.x, candidate.y = nil, nil, nil end
   validate(candidate)
   if candidate.scope ~= item.scope then

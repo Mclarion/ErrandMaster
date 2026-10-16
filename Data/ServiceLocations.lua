@@ -28,7 +28,10 @@ function locations:Add(category, name, mapID, x, y, source)
   for _, known in ipairs(list) do
     if known.mapID == mapID and known.category == category and known.source == source then
       local dx, dy = known.x-x, known.y-y
-      if dx*dx + dy*dy <= 0.003*0.003 then return known end
+      if dx*dx + dy*dy <= 0.003*0.003 then
+        if known.name == name then return known end
+        -- A shared position does not establish that differently named visits are the same NPC.
+      end
     end
   end
   assert(#list < MAX_LOCATIONS, "location limit reached (200 per character)")

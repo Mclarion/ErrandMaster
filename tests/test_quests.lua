@@ -67,4 +67,27 @@ assert(#addon.quests:OnMap(10) == 0 and checkedProtectedID,
 C_QuestLog = nil
 addon.quests:Invalidate()
 assert(#addon.quests:OnMap(10) == 0 and not addon.quests:Add(501, 10))
+-- Active next-waypoint fallback when the POI list has no objective coordinate.
+load("Data/QuestWaypoints.lua")
+C_QuestLog={
+  GetQuestsOnMap=function() return {} end,
+  GetLogIndexForQuestID=function(id) return id==505 and 5 end,
+  GetInfo=function() return {questID=505,title="Find camp",isHeader=false} end,
+  GetNextWaypoint=function() return 10,.3,.6 end,
+}
+addon.quests:Invalidate()
+local waypointTask=assert(addon.quests:Add(505,10))
+local current=addon.quests:OnMap(10)
+assert(#current==1 and current[1].source=="game-next-waypoint")
+local linked=addon.route:Plan(addon.errands:All(),10,0,0,true,{},current,1000,500)
+assert(#linked==1 and linked[1].id==waypointTask.id and
+  linked[1].questLocationSource=="game-next-waypoint")
+C_QuestLog.GetNextWaypoint=function() return 10,.4,.7 end
+addon.quests:Invalidate()
+linked=addon.route:Plan(addon.errands:All(),10,0,0,true,{},addon.quests:OnMap(10))
+assert(linked[1].x==.4 and waypointTask.x==.3)
+C_QuestLog.GetNextWaypoint=function() return nil end
+addon.quests:Invalidate()
+local nextRoute, waiting=addon.route:Plan(addon.errands:All(),10,0,0,true,{},addon.quests:OnMap(10))
+assert(#nextRoute==0 and #waiting==2, "vanished waypoint must not retain its stored coordinates")
 print("active quest and physical distance tests passed")

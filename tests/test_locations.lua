@@ -8,7 +8,7 @@ loadModule("Core/Errands.lua")
 loadModule("Data/ServiceLocations.lua")
 loadModule("Routing/RoutePlanner.lua")
 addon.db:Initialize("Test-Realm")
-assert(ErrandMasterDB.schema == 3 and ErrandMasterDB.characters["Test-Realm"][1].id == "em-3")
+assert(ErrandMasterDB.schema == 5 and ErrandMasterDB.characters["Test-Realm"][1].id == "em-3")
 assert(ErrandMasterDB.settings.discoverServices == false)
 local locations = addon.locations
 local near = locations:Add("Repair", "Repair-capable merchant", 10, .2, .2, "service-event")
@@ -33,4 +33,23 @@ local fixed = addon.errands:Add({name="My exact stop", category="Repair", mapID=
 local withFixed = addon.route:Plan(addon.errands:All(), 10, .4, .4, true, locations:All())
 assert(withFixed[1].id == fixed.id and not withFixed[1].locationID)
 assert(#addon.route:Plan(addon.errands:All(), nil, nil, nil, true, locations:All()) == 0)
+local anonymous = locations:Add("Bank", "Observed bank access — Bank", 10, .6, .6, "service-event")
+local named = locations:Add("Bank", "Bailor — Bank", 10, .6, .6, "service-event")
+assert(named.id ~= anonymous.id and anonymous.name == "Observed bank access — Bank")
+local bank = addon.errands:Add({name="Nearest Bank", category="Bank", origin="suggested"})
+local resolved = addon.route:Plan(addon.errands:All(), 10, .6, .6, true, locations:All())
+local bankStop
+for _, item in ipairs(resolved) do if item.id == bank.id then bankStop = item end end
+assert(bankStop and bankStop.locationID == named.id and bankStop.name == named.name)
+local namedFirst = locations:Add("Mailbox", "Clerk — Mailbox", 10, .7, .7, "service-event")
+local anonymousLater = locations:Add("Mailbox", "Observed mailbox access — Mailbox",
+  10, .7, .7, "service-event")
+assert(anonymousLater.id ~= namedFirst.id and
+  anonymousLater.name == "Observed mailbox access — Mailbox")
+assert(locations:Add("Mailbox", "Clerk — Mailbox", 10, .701, .7,
+  "service-event").id == namedFirst.id)
+local mailRoute = addon.route:Plan(addon.errands:All(), 10, .7, .7, true, locations:All())
+local mailStop
+for _, item in ipairs(mailRoute) do if item.id == mail.id then mailStop = item end end
+assert(mailStop and mailStop.locationID == namedFirst.id)
 print("locations and route tests passed")

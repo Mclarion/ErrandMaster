@@ -70,6 +70,27 @@ assert(pins[3].point[4] == 750 and pins[3].point[5] == -100, 'observed coordinat
 assert(pins[1].label and pins[1].label.text:find('Bank', 1, true) and
   pins[1].label.text:find('yd direct', 1, true), 'route marker identifies its stop and direct distance')
 assert(pins[3].label.text:find('Mailbox', 1, true), 'observed marker identifies its service')
+assert(pins[1].number.text == '1' and pins[2].number.text == '4',
+  'route numbering retains plan order even when intermediate stops are not on this map')
+assert(pins[3].number.text == 'S1' and pins[1].number.point[1] == 'TOPRIGHT',
+  'service pins have a distinct sequence and number is upper-right over marker')
+assert(pins[2].label.text:find('4. Edge',1,true), 'route label matches ordered stop number')
+-- When a native/sibling icon is already at the stop, show only our exponent
+-- number above it; never hide, move or change the existing icon.
+local native=frame(canvas)
+native.width,native.height=18,18
+native.shown=true
+native.GetCenter=function() return 250,250 end
+canvas.GetLeft=function() return 0 end
+canvas.GetTop=function() return 500 end
+canvas.GetChildren=function() return native end
+addon.worldMap:Refresh()
+assert(not pins[1].icon.shown and pins[1].number.point[2]==native and native.shown and
+  native.point==nil, 'coincident icon stays untouched beneath our superscript')
+canvas.GetChildren=function() return nil end
+addon.worldMap:Refresh()
+assert(pins[1].icon.shown and pins[1].number.point[2]==pins[1],
+  'own marker is restored when the native icon goes away')
 observed[1].name=string.rep('x', 23)..'é service'
 addon.worldMap:Refresh()
 assert(not pins[3].label.text:find(string.char(195), 1, true),
@@ -198,7 +219,28 @@ assert(addon.worldMap:Refresh()==false)
 assert(flaky.clicks[1](flaky,'LeftButton',.2,.2)==false)
 flaky.GetMapID=realGetID; issecretvalue=nil
 flaky.mapID=42
+local legacyPlan=addon.Plan
+addon.Plan=function() return {{id='walk',name='Walked',mapID=42,x=.1,y=.2,
+  walkYards=55,walkStatus='partial-route'}},
+  {{id='gap',name='Gap',mapID=42,x=.3,y=.4,walkStatus='unknown-route'}} end
 observed={}
+addon.worldMap:Refresh()
+assert(pins[1].number.text=='P1' and pins[1].label.text:find('connector unverified',1,true) and
+  pins[2].number.text=='U1' and pins[2].label.text:find('Unknown walking path',1,true),
+  'map keeps uncertain destinations visible without claiming a walking path')
+addon.Plan=legacyPlan
+observed={}
+addon.npcs={IsReady=function() return true end,
+  LocationsOnMap=function(_, id)
+    assert(id==42)
+    return {{id='npc-900',npcID=900,name='Banker',category='Bank',
+      source='questiedb-forever',mapID=42,x=.6,y=.4,phaseUnverified=true}}
+  end}
+addon.worldMap:Refresh()
+assert(pins[3].number.text=='N1' and
+  pins[3].label.text:find('QuestieDB candidate',1,true) and
+  pins[3].label.text:find('phase',1,true),
+  'map differentiates database spawn candidates from player-observed service locations')
 for i=1,200 do
   observed[i]={id='loc-'..i,name='Observed '..i,mapID=42,x=(i-1)/200,y=.3}
 end

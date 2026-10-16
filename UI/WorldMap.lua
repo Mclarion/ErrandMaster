@@ -90,6 +90,9 @@ local function newPin(canvas)
   local label = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   label:SetPoint("TOP", pin, "BOTTOM", 0, -2)
   pin.label = label
+  local number = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  number:SetPoint("TOPRIGHT", pin, "TOPRIGHT", 4, 5)
+  pin.number = number
   return pin
 end
 local function shortName(name)
@@ -104,13 +107,46 @@ local function shortName(name)
   return name:sub(1, cut) .. "..."
 end
 
-local function addPin(self, canvas, index, entry, kind, width, height)
+-- Leave a visible, small pre-existing map icon intact; attach only our label
+-- and superscript number. The optional canvas API is absent on some clients.
+local function coincidentIcon(self, canvas, x, y, width, height)
+  if not callable(canvas, "GetChildren") then return end
+  local ok, left, top = pcall(function() return canvas:GetLeft(), canvas:GetTop() end)
+  if not ok or not available(left) or not available(top) or
+      type(left) ~= "number" or type(top) ~= "number" or
+      left ~= left or top ~= top then return end
+  local result = {pcall(canvas.GetChildren, canvas)}
+  if not result[1] then return end
+  local owned = {}
+  for _, pin in ipairs(self.pins) do owned[pin] = true end
+  for i = 2, math.min(#result, 301) do
+    local child = result[i]
+    if child and not owned[child] then
+      local found, shown, cx, cy, w, h = pcall(function()
+        local xPos, yPos = child:GetCenter()
+        return child:IsShown(), xPos, yPos, child:GetWidth(), child:GetHeight()
+      end)
+      if found and shown == true and available(cx) and available(cy) and
+          available(w) and available(h) and
+          type(cx) == "number" and type(cy) == "number" and
+          type(w) == "number" and type(h) == "number" and
+          w >= 8 and w <= 48 and h >= 8 and h <= 48 and
+          math.abs(cx - (left + x * width)) <= 5 and
+          math.abs(cy - (top - y * height)) <= 5 then
+        return child
+      end
+    end
+  end
+end
+
+local function addPin(self, canvas, index, entry, kind, width, height, routeNumber)
   if index >= MAX_PINS then return index end
-  local ok, id, x, y, name, yards = pcall(function()
+  local ok, id, x, y, name, yards, walked, status, category, phased = pcall(function()
     local point = entry.item or entry.errand or entry.location or entry
     if not available(point) or type(point) ~= "table" then return end
     return point.mapID or entry.mapID, point.x or entry.x, point.y or entry.y,
-      point.name, point.directYards
+      point.name, point.directYards, point.walkYards, point.walkStatus,
+      point.category, point.phaseUnverified
   end)
   if not ok or not mapID(id) or id ~= self.currentMapID or
     not normalized(x) or not normalized(y) then return index end
@@ -127,11 +163,40 @@ local function addPin(self, canvas, index, entry, kind, width, height)
   pin:ClearAllPoints()
   pin:SetPoint("CENTER", canvas, "TOPLEFT", x * width, -y * height)
   if kind == "service" then pin.icon:SetColorTexture(.2, .75, 1, .9)
+  elseif kind == "npc" then pin.icon:SetColorTexture(.14, .88, .78, .9)
+  elseif kind == "unknown" then pin.icon:SetColorTexture(.6, .6, .6, .9)
+  elseif available(status) and status == "partial-route" then
+    pin.icon:SetColorTexture(.75, .55, 1, .95)
+  elseif available(walked) and type(walked) == "number" then
+    pin.icon:SetColorTexture(.3, .9, .5, .95)
   else pin.icon:SetColorTexture(1, .7, .1, .95) end
+  pin.number:SetText(kind == "service" and ("S" .. routeNumber) or
+    kind == "npc" and ("N" .. routeNumber) or
+    (available(status) and status == "partial-route" and
+      ("P" .. routeNumber) or tostring(routeNumber)))
+  local existing = coincidentIcon(self, canvas, x, y, width, height)
+  pin.number:ClearAllPoints()
+  if existing then
+    pin.icon:Hide()
+    pin.number:SetPoint("TOPRIGHT", existing, "TOPRIGHT", 4, 5)
+  else
+    pin.icon:Show()
+    pin.number:SetPoint("TOPRIGHT", pin, "TOPRIGHT", 4, 5)
+  end
   local title = shortName(name) or kind
   local description = kind == "service" and ("Observed: " .. title) or
-    (index .. ". " .. title)
-  if kind == "route" and type(yards) == "number" and available(yards) and
+    (kind == "npc" and ("QuestieDB candidate: " .. title ..
+      (available(category) and type(category)=="string" and " ["..category.."]" or "") ..
+      (available(phased) and phased==true and "; phase unverified" or "")) or
+    (kind == "unknown" and ("Unknown walking path: " .. title) or
+      (routeNumber .. ". " .. title)))
+  if kind == "route" and available(walked) and type(walked) == "number" and
+      walked == walked and walked >= 0 and walked <= 10000000 then
+    description = description .. string.format(" %.0f yd observed", walked)
+    if available(status) and status == "partial-route" then
+      description = description .. "; connector unverified"
+    end
+  elseif kind == "route" and available(yards) and type(yards) == "number" and
       yards == yards and yards >= 0 and yards <= 10000000 then
     description = description .. string.format(" ~%.0f yd direct", yards)
   end
@@ -264,18 +329,61 @@ function overlay:Refresh()
   self.pins = self.pins or {}
   local used = 0
   if callable(addon, "Plan") then
-    local planned, entries = pcall(addon.Plan, addon, self.currentMapID)
+    local planned, entries, deferred = pcall(addon.Plan, addon, self.currentMapID)
     if planned and type(entries) == "table" and available(entries) then
-      for _, entry in ipairs(entries) do
-        used = addPin(self, canvas, used, entry, "route", width, height)
+      for routeNumber, entry in ipairs(entries) do
+        used = addPin(self, canvas, used, entry, "route", width, height, routeNumber)
+      end
+    end
+    if planned and type(deferred) == "table" and available(deferred) then
+      local unknown = 0
+      for _, entry in ipairs(deferred) do
+        if available(entry) and type(entry) == "table" then
+          local statusOK, status = pcall(function() return entry.walkStatus end)
+          if statusOK and available(status) and status == "unknown-route" then
+            local nextUsed = addPin(self, canvas, used, entry, "unknown", width, height,
+              "U" .. (unknown + 1))
+            if nextUsed > used then unknown = unknown + 1 end
+            used = nextUsed
+          end
+        end
       end
     end
   end
   if addon.locations and callable(addon.locations, "All") then
     local observed, entries = pcall(addon.locations.All, addon.locations)
     if observed and type(entries) == "table" and available(entries) then
+      local serviceNumber = 0
       for _, entry in ipairs(entries) do
-        used = addPin(self, canvas, used, entry, "service", width, height)
+        local nextUsed = addPin(self, canvas, used, entry, "service", width, height,
+          serviceNumber + 1)
+        if nextUsed > used then serviceNumber = serviceNumber + 1 end
+        used = nextUsed
+      end
+    end
+  end
+  if addon.npcs and callable(addon.npcs,"IsReady") and addon.npcs:IsReady() and
+      callable(addon.npcs,"LocationsOnMap") then
+    local ok, entries=pcall(addon.npcs.LocationsOnMap, addon.npcs, id)
+    if callable(addon.npcs,"Nearest") and callable(addon,"Position") then
+      local positioned, playerMap, x, y=pcall(addon.Position,addon)
+      if positioned and available(playerMap) and playerMap==id and
+          normalized(x) and normalized(y) then
+        local worldW,worldH
+        if callable(addon,"MapWorldSize") then
+          local sized,w,h=pcall(addon.MapWorldSize,addon,id)
+          if sized then worldW,worldH=w,h end
+        end
+        local near, ranked=pcall(addon.npcs.Nearest,addon.npcs,id,x,y,
+          nil,worldW,worldH,20)
+        if near and type(ranked)=="table" and available(ranked) then
+          entries=ranked; ok=true
+        end
+      end
+    end
+    if ok and type(entries)=="table" and available(entries) then
+      for number=1,math.min(#entries,20) do
+        used=addPin(self,canvas,used,entries[number],"npc",width,height,number)
       end
     end
   end
