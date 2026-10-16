@@ -19,6 +19,31 @@ local classes = {DEATHKNIGHT="Death Knight", DEMONHUNTER="Demon Hunter",
   SHAMAN="Shaman", WARLOCK="Warlock", WARRIOR="Warrior"}
 local palettes = {Azure={.42, .76, 1}, Ember={1, .48, .24},
   Violet={.78, .55, 1}, Slate={.75, .83, .85}}
+local swatches = {"Copper", "Amber", "Green", "Blue", "Teal", "Violet", "Rose", "Slate"}
+local swatchRGB = {Copper={.95,.48,.25}, Amber={1,.78,.24}, Green={.42,.94,.48},
+  Blue={.40,.67,1}, Teal={.28,.89,.81}, Violet={.72,.56,1},
+  Rose={1,.50,.68}, Slate={.68,.77,.82}}
+local function colorKey(entry)
+  if not entry then return end
+  if entry.type == "category" then return entry.category end
+  if entry.type == "folder" then return "Folder" end
+  return "Preview"
+end
+local function entryColor(entry)
+  if not entry then return "Slate" end
+  local category = colorKey(entry)
+  local overrides = addon.db.data.settings.wheelCategoryColors
+  if type(overrides) == "table" and overrides[category] then return overrides[category] end
+  if category == "Folder" then return "Blue" end
+  if category == "Preview" then return "Rose" end
+  if category:find("Vendor", 1, true) then return "Amber" end
+  if category:find("Trainer", 1, true) then return "Green" end
+  if category == "Repair" then return "Copper" end
+  if category == "Mailbox" then return "Teal" end
+  if category == "Auction House" then return "Violet" end
+  if category == "Back" then return "Slate" end
+  return "Blue"
+end
 
 local function usable(value)
   if type(issecretvalue) == "function" then
@@ -236,15 +261,20 @@ end
 function wheel:EnsureSlots(count)
   local frame = self.frame
   for i = #self.slots+1, count do
+    local sector = frame:CreateTexture(nil, "BACKGROUND")
+    local glow = frame:CreateTexture(nil, "BORDER")
+    glow:SetBlendMode("ADD")
     local texture = frame:CreateTexture(nil, "ARTWORK")
     texture:SetTexture(icon)
     texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     local text = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     local badge = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     badge:SetPoint("TOPRIGHT", texture, "TOPRIGHT", 4, 4)
-    self.slots[i] = {texture=texture, label=text, badge=badge}
+    self.slots[i] = {sector=sector, glow=glow, texture=texture, label=text, badge=badge}
   end
   for i = count+1, #self.slots do
+    self.slots[i].sector:Hide()
+    self.slots[i].glow:Hide()
     self.slots[i].texture:Hide()
     self.slots[i].label:Hide()
     self.slots[i].badge:Hide()
@@ -315,9 +345,20 @@ function wheel:Layout()
   local iconSize = settings.wheelIconSize * scale
   local radius = math.max(settings.wheelRadius,
     count * settings.wheelIconSize * 1.6 / (2 * math.pi)) * scale
+  local maxExtent = math.min(self.screenWidth, self.screenHeight) / 2 - 20
+  local fit = math.min(1, maxExtent / (radius + iconSize * 1.6))
+  radius, iconSize = radius * fit, iconSize * fit
+  iconSize = math.min(iconSize, radius * 2 * math.pi / count * .72)
+  local outerRadius = radius + iconSize * .9
+  self.centerX = math.max(outerRadius + 12,
+    math.min(self.screenWidth - outerRadius - 12, self.cursorX))
+  self.centerY = math.max(outerRadius + 12,
+    math.min(self.screenHeight - outerRadius - 12, self.cursorY))
   self.radius, self.count = radius, count
+  self.outerRadius = outerRadius
   self.vectors = {}
   self.previews = {}
+  local artSupported = true
   local map, px, py, width, height
   if addon.npcs and type(addon.Position)=="function" then
     local ok, id, x, y = pcall(addon.Position,addon)
@@ -342,6 +383,10 @@ function wheel:Layout()
       self.activeIndex == i and .82 or .95, self.activeIndex == i and .25 or .95)
     local entry=entryAt(i)
     local name, texture = display(entry)
+    local kind = entry and entry.type
+    local marker = kind == "folder" and "OPEN FOLDER" or
+      (kind == "spell" or kind == "macro" or kind == "item" or kind == "addon") and
+      "PREVIEW ONLY" or "QUEUE / VIEW"
     if map and entry and entry.type=="category" then
       local category=entry.category
       if previewCache[category]==nil then
@@ -350,11 +395,30 @@ function wheel:Layout()
       local preview=previewCache[category]
       if preview then self.previews[i]=preview; name=name.."\n"..preview end
     end
-    slot.label:SetText(name)
+    slot.label:SetText(count <= 9 and (name .. "\n" .. marker) or name)
+    slot.label:SetWidth(math.max(60, radius * 2 * math.pi / count * .9))
+    slot.label:SetJustifyH("CENTER")
     slot.texture:SetTexture(texture)
     local angle = math.pi / 2 - (i - 1) * 2 * math.pi / count
     local vector = {math.cos(angle), math.sin(angle)}
     self.vectors[i] = vector
+    local art = assetRoot .. string.format("WheelSector%02d.blp", count)
+    local glow = assetRoot .. string.format("WheelGlow%02d.blp", count)
+    slot.sector:SetTexture(art)
+    slot.glow:SetTexture(glow)
+    for _, region in ipairs({slot.sector, slot.glow}) do
+      region:SetSize(outerRadius * 2, outerRadius * 2)
+      region:ClearAllPoints()
+      region:SetPoint("CENTER", UIParent, "BOTTOMLEFT", self.centerX, self.centerY)
+      if i > 1 then
+        local ok = type(region.SetRotation) == "function" and
+          pcall(region.SetRotation, region,
+            (addon.db.data.settings.wheelArtReversed and 1 or -1) *
+            (i-1) * 2 * math.pi / count)
+        if not ok then artSupported = false end
+      end
+      region:Show()
+    end
     slot.texture:SetSize(iconSize, iconSize)
     slot.texture:ClearAllPoints()
     slot.texture:SetPoint("CENTER", UIParent, "BOTTOMLEFT",
@@ -362,21 +426,30 @@ function wheel:Layout()
     slot.label:ClearAllPoints()
     slot.label:SetPoint("TOP", slot.texture, "BOTTOM", 0, -3)
   end
+  if not artSupported then
+    -- Unknown client texture rotation: keep the usable icon wheel, not piled-up pie art.
+    for i = 1, count do self.slots[i].sector:Hide(); self.slots[i].glow:Hide() end
+  end
 end
 function wheel:SetSelection(index)
   if self.selected == index then return end
   self.selected = index
-  local colors = palettes[addon.db.data.settings.wheelTheme] or palettes.Azure
   for i = 1, self.count or 0 do
     local slot = self.slots[i]
+    local color = swatchRGB[entryColor(entryAt(i))] or swatchRGB.Slate
+    local theme = palettes[addon.db.data.settings.wheelTheme] or palettes.Azure
+    slot.sector:SetVertexColor(color[1], color[2], color[3])
+    slot.sector:SetAlpha(i == index and .95 or .55)
+    slot.glow:SetVertexColor(color[1], color[2], color[3])
+    slot.glow:SetAlpha(i == index and .8 or .22)
     if i == index then
-      slot.texture:SetVertexColor(1, .82, .25)
+      slot.texture:SetVertexColor(1, 1, 1)
       slot.texture:SetAlpha(1)
-      slot.label:SetTextColor(1, .82, .25)
+      slot.label:SetTextColor(color[1], color[2], color[3])
     else
-      slot.texture:SetVertexColor(colors[1], colors[2], colors[3])
+      slot.texture:SetVertexColor(theme[1], theme[2], theme[3])
       slot.texture:SetAlpha(.8)
-      slot.label:SetTextColor(.9, .9, .9)
+      slot.label:SetTextColor(.8, .8, .8)
     end
   end
   self.centerLabel:SetText(index and index > 0 and
@@ -389,9 +462,14 @@ function wheel:UpdateHighlight()
   local x, y = cursorPosition()
   if not x then self:SetSelection(nil); return end
   local dx, dy = x - self.centerX, y - self.centerY
-  local deadZone = math.max(28, addon.db.data.settings.wheelIconSize *
-    (addon.db.data.settings.wheelScale or 1) * .7)
+  if self.cursorX and (x-self.cursorX)^2+(y-self.cursorY)^2 < 24^2 then
+    self:SetSelection(nil); return
+  end
+  local deadZone = math.max(28, self.radius * .28)
   if dx*dx + dy*dy < deadZone*deadZone then self:SetSelection(nil); return end
+  if dx*dx + dy*dy > (self.outerRadius+24)^2 then
+    self:SetSelection(nil); return
+  end
   local best, score = nil, -math.huge
   for i, vector in ipairs(self.vectors or {}) do
     local dot = dx*vector[1] + dy*vector[2]
@@ -414,18 +492,18 @@ function wheel:Open()
   if not outOfCombat() then return false end
   self:Create()
   if self.frame:IsShown() then self:Close(); return false end
-  local x, y = cursorPosition()
+  local x, y, width, height = cursorPosition()
   if not x then return false end
-  -- Keep the cancel/dead zone exactly under the cursor, even at screen edges.
-  self.centerX, self.centerY = x, y
+  self.cursorX, self.cursorY = x, y
+  self.screenWidth, self.screenHeight = width, height
   self:Layout()
   self:SetSelection(0) -- Force an initial unselected render.
   self:SetSelection(nil)
   self.frame:Show()
   animate(self.frame)
   if type(SetCursor) == "function" then
-    self.cursorAttempted = true
-    pcall(SetCursor, CURSOR)
+    local ok, result = pcall(SetCursor, CURSOR)
+    self.cursorAttempted = ok and result ~= false
   end
   return true
 end
@@ -653,14 +731,14 @@ function wheel:RefreshEditor()
   end
   if self.editorLabel then
     local selection = self.editorIndex and slots[self.editorIndex]
-    self.editorLabel:SetText(string.format("%d/24 entries | page %d/%d | %s", #slots,
+    self.editorLabel:SetText(string.format("%d/24 entries - page %d/%d - %s", #slots,
       self.editorPage, pageCount,
       selection and ("Selected #" .. self.editorIndex .. ": " .. display(selection)) or "Select an entry"))
   end
   if self.folderLabel then
     local folder = self.editorIndex and slots[self.editorIndex]
     self.folderLabel:SetText(folder and folder.type == "folder" and
-      ("Folder: " .. folder.name .. " | " .. #folder.entries .. "/8 items") or
+      ("Folder: " .. folder.name .. " - " .. #folder.entries .. "/8 items") or
       "Hold over an entry while dragging to make a folder.")
     for i, button in ipairs(self.folderRows or {}) do
       local item = folder and folder.type == "folder" and folder.entries[i]
@@ -678,6 +756,37 @@ function wheel:Choose(index)
   self.slotType:SetText(entry.type)
   self.slotValue:SetText(entry.category or entry.name or (entry.id and tostring(entry.id)) or "")
   self:RefreshEditor()
+  self:RefreshColor()
+end
+function wheel:RefreshColor()
+  if not self.colorLabel then return end
+  local slots = addon.db.data.settings.wheelSlots
+  local entry = self.editorIndex and slots[self.editorIndex]
+  if entry then
+    local overrides = addon.db.data.settings.wheelCategoryColors or {}
+    self.colorLabel:SetText("Color: " .. (overrides[colorKey(entry)] or "default"))
+  else self.colorLabel:SetText("Color: select entry") end
+end
+function wheel:ChangeColor(reset)
+  if not outOfCombat() then self:Notice("Change colors out of combat."); return end
+  local slots = addon.db.data.settings.wheelSlots
+  local entry = self.editorIndex and slots[self.editorIndex]
+  if not entry then
+    self:Notice("Select a row to color."); return
+  end
+  local nextColor
+  if not reset then
+    local current = entryColor(entry)
+    for i, name in ipairs(swatches) do
+      if name == current then nextColor = swatches[i % #swatches + 1]; break end
+    end
+  end
+  local key = colorKey(entry)
+  if addon.db:SetWheelColor(key, nextColor) then
+    self:RefreshColor()
+    self:Notice(nextColor and (key .. " color: " .. nextColor) or
+      (key .. " color reset to default."))
+  end
 end
 function wheel:DropEntry(entry, target, hovered)
   if not outOfCombat() then self:Notice("Edit the wheel out of combat."); return false end
@@ -717,10 +826,10 @@ function wheel:DropNative(target)
 end
 function wheel:FinishDrag()
   local source, target = self.dragIndex, self.hoverIndex
-  self.dragIndex, self.hoverIndex = nil, nil
+  local hoverStart, remove = self.hoverStart, self.hoverRemove
+  self.dragIndex, self.hoverIndex, self.hoverStart, self.hoverRemove = nil, nil, nil, nil
   if not source or not outOfCombat() then return end
-  if self.hoverRemove then
-    self.hoverRemove = nil
+  if remove then
     if addon.db:WheelRemove(source) then
       self.activeIndex, self.editorIndex = nil, nil
       self:Notice("Entry removed."); self:RefreshEditor(); animate(self.settingsFrame)
@@ -729,9 +838,9 @@ function wheel:FinishDrag()
   end
   if not target or target == source then return end
   local elapsed = 0
-  if self.hoverStart and type(GetTime) == "function" then
+  if hoverStart and type(GetTime) == "function" then
     local ok, now = pcall(GetTime)
-    if ok and usable(now) and type(now) == "number" then elapsed = now - self.hoverStart end
+    if ok and usable(now) and type(now) == "number" then elapsed = now - hoverStart end
   end
   local success
   if elapsed >= .45 then
@@ -783,7 +892,10 @@ end
 function wheel:RefreshSettings()
   if not self.settingsFrame then return end
   local settings = addon.db.data.settings
-  self.sizeLabel:SetText(string.format("Radius %d  |  Icon %d  |  Scale %.2f  |  Theme %s",
+  if self.artLabel then
+    self.artLabel:SetText(settings.wheelArtReversed and "Art: reversed" or "Art: default")
+  end
+  self.sizeLabel:SetText(string.format("Radius %d  -  Icon %d  -  Scale %.2f  -  Theme %s",
     settings.wheelRadius, settings.wheelIconSize, settings.wheelScale or 1,
     settings.wheelTheme or "Azure"))
   self.bindingLabel:SetText(self:BindingText())
@@ -794,6 +906,7 @@ function wheel:RefreshSettings()
     self.professionStatus:SetText("Professions ("..source.."): "..label)
   end
   self:RefreshEditor()
+  self:RefreshColor()
 end
 function wheel:ChangeProfession(mode)
   if not outOfCombat() then self:Notice("Change professions out of combat."); return end
@@ -825,14 +938,26 @@ function wheel:ShowSettings()
       "BasicFrameTemplateWithInset")
     frame:SetSize(745, 755)
     frame:SetPoint("CENTER")
+    if addon.windowPosition then addon.windowPosition:Restore(frame, "wheelSettings") end
     frame:SetFrameStrata("DIALOG")
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
-    frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
-    frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+    frame:SetScript("OnDragStart", function(self)
+      self:StartMoving(); self.errandMoving = true
+    end)
+    frame:SetScript("OnDragStop", function(self)
+      if not self.errandMoving then return end
+      self:StopMovingOrSizing(); self.errandMoving = nil
+      if addon.windowPosition then addon.windowPosition:Save(self, "wheelSettings") end
+    end)
     frame:SetScript("OnHide", function()
-      wheel:StopCapture(); wheel.dragIndex = nil; wheel.hoverIndex = nil
+      if frame.errandMoving then
+        frame:StopMovingOrSizing(); frame.errandMoving = nil
+        if addon.windowPosition then addon.windowPosition:Save(frame, "wheelSettings") end
+      end
+      wheel:StopCapture()
+      wheel.dragIndex, wheel.hoverIndex, wheel.hoverStart, wheel.hoverRemove = nil, nil, nil, nil
     end)
     frame:RegisterEvent("PLAYER_REGEN_DISABLED")
     frame:RegisterEvent("DISPLAY_SIZE_CHANGED")
@@ -847,7 +972,7 @@ function wheel:ShowSettings()
     self.bindingLabel = caption(frame, "", 22, -43)
     self.bindButton = control(frame, "Bind wheel", 22, -66, 130,
       function() wheel:StartCapture() end)
-    self.status = caption(frame, "Drag a spell/item/macro to a slot; entries only preview.", 22, -690)
+    self.status = caption(frame, "Drag to reorder; spell/item/macro entries only preview.", 22, -710)
     self.sizeLabel = caption(frame, "", 22, -106)
     local function adjust(field, delta, minimum, maximum)
       local settings = addon.db.data.settings
@@ -882,6 +1007,9 @@ function wheel:ShowSettings()
         end
       end
     end)
+    self.colorLabel = caption(frame, "Color: select entry", 22, -191)
+    control(frame, "Next color", 192, -186, 72, function() wheel:ChangeColor(false) end)
+    control(frame, "Reset color", 269, -186, 72, function() wheel:ChangeColor(true) end)
     caption(frame, "Trainer filter (per character; manual overrides auto)", 383, -45)
     self.professionStatus = caption(frame, "", 383, -67)
     self.professionInput = edit(frame, "Profession name (e.g. Alchemy)", 383, -94, 176, 40)
@@ -891,15 +1019,24 @@ function wheel:ShowSettings()
       function() wheel:ChangeProfession("remove") end)
     self.professionAutoButton = control(frame, "Use auto detection", 383, -164, 176,
       function() wheel:ChangeProfession("auto") end)
-    self.editorLabel = caption(frame, "", 22, -211)
-    caption(frame, "Click #2 for Move/Remove. Drag to reorder; hold 0.45s to folder.", 22, -233)
+    control(frame, "Flip pie art", 383, -195, 176, function()
+      if not outOfCombat() then wheel:Notice("Change wheel art out of combat."); return end
+      local settings = addon.db.data.settings
+      settings.wheelArtReversed = not settings.wheelArtReversed
+      wheel:RefreshSettings()
+      wheel:Notice("Pie art direction changed. Reopen the wheel to inspect alignment.")
+    end)
+    self.artLabel = caption(frame, "Art: default", 565, -201)
+    self.editorLabel = caption(frame, "", 22, -231)
+    caption(frame, "Click #2 for Move/Remove. Drag to reorder; hold 0.45s to folder.", 22, -253)
     self.editorRows = {}
     for i = 1, 12 do
-      local row = control(frame, "", 22, -259 - (i-1)*27, 330, function(button)
+      local row = control(frame, "", 22, -279 - (i-1)*27, 330, function(button)
         wheel:Choose(button.slotIndex)
       end)
       row:RegisterForDrag("LeftButton")
       row:SetScript("OnDragStart", function(button)
+        wheel.hoverIndex, wheel.hoverStart, wheel.hoverRemove = nil, nil, nil
         if outOfCombat() then wheel.dragIndex = button.slotIndex end
       end)
       row:SetScript("OnEnter", function(button)
@@ -908,7 +1045,9 @@ function wheel:ShowSettings()
         wheel.hoverStart = ok and usable(now) and type(now) == "number" and now or nil
       end)
       row:SetScript("OnLeave", function(button)
-        if wheel.hoverIndex == button.slotIndex then wheel.hoverIndex = nil end
+        if wheel.hoverIndex == button.slotIndex then
+          wheel.hoverIndex, wheel.hoverStart = nil, nil
+        end
       end)
       row:SetScript("OnReceiveDrag", function(button)
         if wheel.dragIndex then wheel.hoverIndex = button.slotIndex; wheel:FinishDrag()
@@ -917,19 +1056,22 @@ function wheel:ShowSettings()
       row:SetScript("OnDragStop", function() wheel:FinishDrag() end)
       self.editorRows[i] = row
     end
-    control(frame, "< Previous", 22, -587, 100, function()
+    control(frame, "< Previous", 22, -607, 100, function()
       wheel.editorPage = math.max(1, (wheel.editorPage or 1)-1); wheel:RefreshEditor()
     end)
-    control(frame, "Next >", 127, -587, 100, function()
+    control(frame, "Next >", 127, -607, 100, function()
       wheel.editorPage = (wheel.editorPage or 1)+1; wheel:RefreshEditor()
     end)
-    local trash = control(frame, "Drag here to REMOVE", 22, -625, 330, function()
+    local trash = control(frame, "Drag here to REMOVE", 22, -645, 330, function()
       if wheel.editorIndex and outOfCombat() and addon.db:WheelRemove(wheel.editorIndex) then
         wheel.activeIndex, wheel.editorIndex = nil, nil
         wheel:RefreshEditor()
       end
     end)
-    trash:SetScript("OnEnter", function() wheel.hoverRemove = true end)
+    trash:SetScript("OnEnter", function()
+      wheel.hoverIndex, wheel.hoverStart = nil, nil
+      if wheel.dragIndex then wheel.hoverRemove = true end
+    end)
     trash:SetScript("OnLeave", function() wheel.hoverRemove = nil end)
     trash:SetScript("OnReceiveDrag", function()
       if wheel.dragIndex then wheel.hoverRemove = true; wheel:FinishDrag() end

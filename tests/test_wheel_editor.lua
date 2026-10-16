@@ -111,8 +111,17 @@ _G.testTime=1
 wheel.editorRows[1].scripts.OnEnter(wheel.editorRows[1])
 wheel.editorRows[2].scripts.OnDragStop(wheel.editorRows[2])
 assert(addon.db.data.settings.wheelSlots[1].category=='Repair')
+-- Leaving the target cancels the hover; no stale folder/reorder on mouse release.
+wheel.editorRows[2].scripts.OnDragStart(wheel.editorRows[2])
+wheel.editorRows[1].scripts.OnEnter(wheel.editorRows[1])
+wheel.editorRows[1].scripts.OnLeave(wheel.editorRows[1])
+_G.testTime=10
+wheel.editorRows[2].scripts.OnDragStop(wheel.editorRows[2])
+assert(addon.db.data.settings.wheelSlots[1].category=='Repair' and
+  wheel.hoverIndex==nil and wheel.hoverStart==nil)
 wheel.folderName:SetText('Travel')
 wheel.editorRows[2].scripts.OnDragStart(wheel.editorRows[2])
+_G.testTime=1
 wheel.editorRows[1].scripts.OnEnter(wheel.editorRows[1])
 _G.testTime=2
 wheel.editorRows[2].scripts.OnDragStop(wheel.editorRows[2])
@@ -121,6 +130,10 @@ assert(addon.db.data.settings.wheelSlots[1].name=='Travel' and
   #addon.db.data.settings.wheelSlots[1].entries==2)
 wheel.editorRows[1].scripts.OnClick(wheel.editorRows[1])
 assert(wheel.folderRows[1].shown)
+click('Next color')
+assert(addon.db.data.settings.wheelCategoryColors.Folder=='Teal')
+click('Reset color')
+assert(addon.db.data.settings.wheelCategoryColors.Folder==nil)
 x,y=960,540
 assert(wheel:Open())
 x,y=wheel.centerX,wheel.centerY+wheel.radius
@@ -129,6 +142,16 @@ assert(wheel.count==3 and wheel.submenu=='folder') -- two children and Back
 wheel:Close()
 wheel.folderRows[1].scripts.OnClick(wheel.folderRows[1])
 assert(addon.db.data.settings.wheelSlots[1].type=='category')
+-- A native cursor drop must not be copied twice by OnReceiveDrag plus drag-stop.
+droppedKind,droppedID='spell',51515
+local before=#addon.db.data.settings.wheelSlots
+wheel.editorRows[2].scripts.OnReceiveDrag(wheel.editorRows[2])
+assert(#addon.db.data.settings.wheelSlots==before+1)
+wheel.editorRows[2].scripts.OnClick(wheel.editorRows[2])
+click('Next color')
+assert(addon.db.data.settings.wheelCategoryColors.Preview=='Slate')
+click('Reset color')
+assert(addon.db.data.settings.wheelCategoryColors.Preview==nil)
 -- Dragging to the explicit removal zone removes the source entry.
 local count=#addon.db.data.settings.wheelSlots
 wheel.editorRows[2].scripts.OnDragStart(wheel.editorRows[2])
@@ -137,6 +160,16 @@ trash.scripts.OnReceiveDrag(trash)
 assert(#addon.db.data.settings.wheelSlots==count-1)
 click('Scale +'); click('Theme')
 assert(addon.db.data.settings.wheelScale>1 and addon.db.data.settings.wheelTheme=='Ember')
+click('Flip pie art')
+assert(addon.db.data.settings.wheelArtReversed==true)
+click('Flip pie art')
+assert(addon.db.data.settings.wheelArtReversed==false)
+wheel.editorRows[1].scripts.OnClick(wheel.editorRows[1])
+click('Next color')
+assert(addon.db.data.settings.wheelCategoryColors.Repair=='Amber' and
+  wheel.colorLabel.text:find('Amber',1,true))
+click('Reset color')
+assert(addon.db.data.settings.wheelCategoryColors.Repair==nil)
 -- Invalid/protected cursor data, combat and full-wheel drops cannot mutate state.
 count=#addon.db.data.settings.wheelSlots
 GetCursorInfo=function() error('protected') end

@@ -27,6 +27,7 @@ assert binding.get("category") == "ADDONS"
 assert "ErrandMaster_OpenWheel()" in (binding.text or "")
 runpy.run_path(str(ROOT / "tests" / "test_cursor_asset.py"))
 runpy.run_path(str(ROOT / "tests" / "test_icons.py"))
+runpy.run_path(str(ROOT / "tests" / "test_wheel_art.py"))
 runtime = LuaRuntime()
 loadfile = runtime.eval("loadfile")
 for path in [*paths, *sorted((ROOT / "tests").glob("*.lua"))]:
@@ -36,6 +37,7 @@ for script in ("test_core.lua", "test_locations.lua", "test_npcs.lua", "test_dis
                "test_quests.lua", "test_quest_waypoints.lua", "test_walk_graph.lua", "test_trails.lua",
                "test_route_walk.lua", "test_npc_route.lua", "test_zone_search.lua",
                "test_taxi_advice.lua",
-               "test_radial.lua", "test_wheel_editor.lua", "test_world_map.lua", "test_destinations.lua",
+               "test_radial.lua", "test_wheel_editor.lua", "test_window_position.lua",
+               "test_world_map.lua", "test_destinations.lua",
                "test_minimap.lua", "test_boot.lua"):
     LuaRuntime().execute(f'dofile("tests/{script}")')

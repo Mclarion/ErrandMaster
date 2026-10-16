@@ -225,7 +225,9 @@ function addon:NavigateNext()
   local route = self:Plan()
   local nextItem = route[1]
   if not nextItem then
-    self.navigation:Clear() -- Clear only ErrandMaster's old TomTom handle.
+    if not self.navigation:Clear() then
+      self:Print("Old ErrandMaster TomTom pin could not be removed; clear it in TomTom.")
+    end
     self:Print(self.db.data.settings.routeMode == "observed" and
       "No verified walking route to a stop on this map. Try /em trails on or /em walking off for direct estimates." or
       "No positioned errands on this map.")
@@ -233,16 +235,19 @@ function addon:NavigateNext()
   end
   if self.db.data.settings.routeMode == "observed" and
       nextItem.walkStatus ~= "known-route" then
-    self.navigation:Clear()
-    self:Print(string.format("Partial observed segment toward %s (%.0f yd recorded); the connector to the destination is unverified. No navigation waypoint set.",
-      nextItem.name, nextItem.walkYards or 0))
+    local cleared = self.navigation:Clear()
+    self:Print(string.format("Partial observed segment toward %s (%.0f yd recorded); connector unverified. %s",
+      nextItem.name, nextItem.walkYards or 0,
+      cleared and "No waypoint set." or "Old TomTom pin could not be removed."))
     return
   end
   local used = self.navigation:Next(nextItem)
   self:Print(string.format("Next: %s (map %d, %.1f, %.1f%s). %s", nextItem.name,
     nextItem.mapID, nextItem.x*100, nextItem.y*100,
     nextItem.approximate and "; approximate player position" or "",
-    used and "TomTom waypoint set." or "Use the displayed coordinates; no compatible TomTom waypoint."))
+    used and "TomTom waypoint set." or (self.navigation.handle and
+      "Old ErrandMaster pin could not be removed; no new pin set." or
+      "Use the displayed coordinates; no compatible TomTom waypoint.")))
   if nextItem.directYards then
     self:Print(string.format("Approximately %.0f yd straight-line; actual travel may be longer.",
       nextItem.directYards))

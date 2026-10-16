@@ -35,20 +35,46 @@ local function numeric(value)
   assert(result, "coordinates and map ID must be numbers")
   return result
 end
+local function shortText(value, max)
+  if type(value) ~= "string" then return "Unknown" end
+  value = value:gsub("|", "/"):gsub("[%c]", " ")
+  if #value <= max then return value end
+  local cut = max - 3
+  while cut > 0 do
+    local byte = value:byte(cut + 1)
+    if not byte or byte < 128 or byte > 191 then break end
+    cut = cut - 1
+  end
+  return value:sub(1, cut) .. "..."
+end
 function ui:Create()
   local frame = CreateFrame("Frame", "ErrandMasterWindow", UIParent, "BasicFrameTemplateWithInset")
   frame:SetSize(730, 580)
   frame:SetPoint("CENTER")
+  if addon.windowPosition then addon.windowPosition:Restore(frame, "main") end
   frame:SetMovable(true)
   frame:EnableMouse(true)
   frame:RegisterForDrag("LeftButton")
-  frame:SetScript("OnDragStart", function(self) self:StartMoving() end)
-  frame:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+  frame:SetScript("OnDragStart", function(self)
+    self:StartMoving(); self.errandMoving = true
+  end)
+  frame:SetScript("OnDragStop", function(self)
+    if not self.errandMoving then return end
+    self:StopMovingOrSizing(); self.errandMoving = nil
+    if addon.windowPosition then addon.windowPosition:Save(self, "main") end
+  end)
+  frame:SetScript("OnHide", function(self)
+    if self.errandMoving then
+      self:StopMovingOrSizing(); self.errandMoving = nil
+      if addon.windowPosition then addon.windowPosition:Save(self, "main") end
+    end
+  end)
   frame:SetClampedToScreen(true)
   frame.TitleText:SetText("ErrandMaster - Smart Route Planner")
   frame:Hide()
   self.frame = frame
   self.zone = label(frame, "", 18, -35)
+  self.zone:SetWidth(690)
   self.message = label(frame, "", 18, -555)
   self.rows = {}
   label(frame, "Same-map route (observed segments or labeled direct estimates)", 18, -61)
@@ -61,6 +87,7 @@ function ui:Create()
     self.rows[i] = row
   end
   self.summary = label(frame, "", 18, -329)
+  self.summary:SetWidth(690)
   label(frame, "Selected errand", 18, -360)
   self.selectedText = label(frame, "None", 18, -378)
   button(frame, "Complete / Reopen", 18, -401, 135, function() ui:Change("complete") end)
@@ -68,13 +95,19 @@ function ui:Create()
   button(frame, "Delete", 238, -401, 75, function() ui:Change("delete") end)
   button(frame, "Up", 318, -401, 55, function() ui:Change("up") end)
   button(frame, "Down", 378, -401, 65, function() ui:Change("down") end)
-  button(frame, "Previous page", 18, -443, 125, function()
+  button(frame, "Prev page", 18, -443, 110, function()
     ui.page = math.max(1, ui.page - 1); ui:Refresh()
   end)
-  button(frame, "Next page", 148, -443, 125, function()
+  button(frame, "Next page", 133, -443, 110, function()
     ui.page = ui.page + 1; ui:Refresh()
   end)
-  button(frame, "Navigate next", 278, -443, 165, function() addon:NavigateNext() end)
+  button(frame, "Navigate", 248, -443, 94, function() addon:NavigateNext() end)
+  self.clearWaypointButton = button(frame, "Clear pin", 347, -443, 96, function()
+    local owned = addon.navigation.handle ~= nil
+    if addon.navigation:Clear() then
+      ui:Notice(owned and "ErrandMaster waypoint cleared." or "No ErrandMaster waypoint to clear.")
+    else ui:Notice("Could not clear ErrandMaster waypoint; check TomTom.") end
+  end)
   button(frame, "Optimize", 18, -477, 120, function()
     addon.db.data.settings.optimize = true; ui:Refresh()
   end)
@@ -84,8 +117,9 @@ function ui:Create()
   button(frame, "TomTom on/off", 268, -477, 175, function()
     local settings = addon.db.data.settings
     settings.useTomTom = not settings.useTomTom
-    addon.navigation:Clear()
+    local cleared = addon.navigation:Clear()
     ui:Refresh()
+    if not cleared then ui:Notice("Old ErrandMaster pin remains; TomTom could not remove it.") end
   end)
   label(frame, "Add or edit", 466, -61)
   self.name = input(frame, "Name", 466, -82, 230, 80)
@@ -193,8 +227,8 @@ function ui:Refresh()
   if not self.frame then return end
   local map, x, y = addon:Position()
   local zone = GetZoneText and GetZoneText() or "Unknown zone"
-  self.zone:SetText(string.format("Zone: %s | Map: %s | Order: %s | New scope: %s | TomTom: %s",
-    tostring(zone), tostring(map or "unknown"),
+  self.zone:SetText(string.format("Zone: %s - Map: %s\nOrder: %s - New scope: %s - TomTom: %s",
+    shortText(zone, 28), tostring(map or "unknown"),
     addon.db.data.settings.routeMode == "observed" and "observed walk" or "direct estimate",
     addon.db.data.settings.defaultScope, addon.db.data.settings.useTomTom and "on" or "off"))
   self.discoveryButton:SetText("Discover services: " ..
@@ -227,25 +261,26 @@ function ui:Refresh()
     if entry then
       local item = entry.item
       self.visible[i] = item
-      row:SetText(string.format("%s  [%s] %s  %s%s", item.id == self.selected and ">" or " ", entry.status,
-        item.name, item.x and string.format("(%s%.1f, %.1f)",
+      row:SetText(string.format("%s [%s] %s %s%s", item.id == self.selected and ">" or " ", entry.status,
+        shortText(item.name, item.walkStatus == "partial-route" and 18 or 25),
+        item.x and string.format("(%s%.1f, %.1f)",
           item.approximate and "~" or "", item.x*100, item.y*100) or "(no position)",
         item.walkYards and string.format(" %.0f yd observed%s", item.walkYards,
-          item.walkStatus == "partial-route" and " (endpoint unknown)" or "") or
+          item.walkStatus == "partial-route" and "; link unknown" or "") or
           (item.directYards and string.format(" ~%.0f yd direct", item.directYards) or "")))
       row:Show()
     else row:Hide() end
   end
-  self.summary:SetText(string.format("%d %s | %d deferred/unknown | %d done | page %d/%d%s",
+  self.summary:SetText(string.format("%d %s - %d deferred/unknown - %d done - page %d/%d%s",
     #active, addon.db.data.settings.routeMode == "observed" and
       "observed/partial segments" or "direct estimates",
     #deferred, completed, self.page, math.max(1, math.ceil(#entries/8)),
     active[#active] and (active[#active].cumulativeWalkYards and
-      string.format(" | %.0f yd observed total", active[#active].cumulativeWalkYards) or
+      string.format(" - %.0f yd observed total", active[#active].cumulativeWalkYards) or
       (active[#active].cumulativeYards and
-        string.format(" | ~%.0f yd direct total", active[#active].cumulativeYards) or "")) or ""))
+        string.format(" - ~%.0f yd direct total", active[#active].cumulativeYards) or "")) or ""))
   local chosen = self.selected and addon.errands:Get(self.selected)
-  self.selectedText:SetText(chosen and (chosen.name .. " [" .. chosen.scope .. "]") or "None")
+  self.selectedText:SetText(chosen and (shortText(chosen.name, 60) .. " [" .. chosen.scope .. "]") or "None")
 end
 function ui:Toggle()
   if self.frame:IsShown() then self.frame:Hide() else self:Refresh(); self.frame:Show() end

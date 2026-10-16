@@ -68,6 +68,22 @@ ErrandMasterDB.settings.wheelIconSize = 0/0
 addon.db:Initialize("Test-Realm")
 assert(ErrandMasterDB.settings.wheelRadius == 110 and ErrandMasterDB.settings.wheelIconSize == 46)
 assert(ErrandMasterDB.settings.wheelScale == 1 and ErrandMasterDB.settings.wheelTheme == "Azure")
+ErrandMasterDB.settings.wheelArtReversed='not-a-boolean'
+addon.db:Initialize('Test-Realm')
+assert(ErrandMasterDB.settings.wheelArtReversed==false)
+assert(addon.db:SetWheelColor('Vendor','Amber') and
+  ErrandMasterDB.settings.wheelCategoryColors.Vendor=='Amber')
+assert(not addon.db:SetWheelColor('Vendor','bad') and
+  not addon.db:SetWheelColor('bad|name','Green'))
+ErrandMasterDB.settings.wheelCategoryColors['Bad|name']='Green'
+ErrandMasterDB.settings.windowPositions={targets={x=.25,y=.4}, main={x=0/0,y=.4}}
+addon.db:Initialize('Test-Realm')
+assert(ErrandMasterDB.settings.wheelCategoryColors.Vendor=='Amber' and
+  not ErrandMasterDB.settings.wheelCategoryColors['Bad|name'])
+assert(ErrandMasterDB.settings.windowPositions.targets.x==.25 and
+  not ErrandMasterDB.settings.windowPositions.main)
+assert(addon.db:SetWheelColor('Vendor',nil) and
+  not ErrandMasterDB.settings.wheelCategoryColors.Vendor)
 assert(addon.db:WheelInsert({type="addon", name="ErrandMaster"}) and #ErrandMasterDB.settings.wheelSlots == 9)
 assert(addon.db:WheelMove(9, 2) and ErrandMasterDB.settings.wheelSlots[2].name == "ErrandMaster")
 assert(addon.db:WheelFolder(2, 3, "Useful") and #ErrandMasterDB.settings.wheelSlots == 8)
@@ -189,6 +205,11 @@ assert(#added == 1 and #removed == 0)
 assert(added[1][5].source == "ErrandMaster" and added[1][5].persistent == false)
 addon.navigation:Next(b)
 assert(#added == 2 and #removed == 1 and removed[1] == added[1][1])
+TomTom.RemoveWaypoint=function() return false end
+assert(not addon.navigation:Next(a) and #added==2 and
+  addon.navigation.handle==added[2][1],
+  'a failed removal cannot abandon an owned handle or create a duplicate pin')
+TomTom.RemoveWaypoint=function(_, handle) removed[#removed+1] = handle end
 addon.navigation:Next(nil)
 assert(#removed == 2 and removed[2] == added[2][1])
 TomTom = nil

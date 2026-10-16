@@ -3,10 +3,13 @@ addon.navigation = {}
 local navigation = addon.navigation
 
 function navigation:Clear()
-  if self.handle and self.provider and type(self.provider.RemoveWaypoint) == "function" then
-    pcall(self.provider.RemoveWaypoint, self.provider, self.handle)
+  if self.handle then
+    if not self.provider or type(self.provider.RemoveWaypoint) ~= "function" then return false end
+    local ok, result = pcall(self.provider.RemoveWaypoint, self.provider, self.handle)
+    if not ok or result == false then return false end
   end
   self.handle, self.key, self.provider = nil, nil, nil
+  return true
 end
 
 function navigation:Next(item)
@@ -21,7 +24,7 @@ function navigation:Next(item)
     return false
   end
   if self.handle and self.provider == provider and self.key == key then return true end
-  self:Clear()
+  if not self:Clear() then return false end
   local ok, handle = pcall(provider.AddWaypoint, provider, item.mapID, item.x, item.y,
     {title = "ErrandMaster: " .. item.name, source = "ErrandMaster", persistent = false, crazy = true})
   if ok and handle then

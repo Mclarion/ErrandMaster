@@ -43,14 +43,22 @@ $stateHashes=@{};foreach($state in $states){$stateHashes[$state.FullName]=(Get-F
 $stage=Join-Path $interface ('.ErrandMaster-stage-'+[guid]::NewGuid().ToString('N'))
 $backupRoot=Join-Path $interface 'ErrandMaster-backups'
 $stamp=[DateTime]::UtcNow.ToString('yyyyMMddHHmmss')+'-'+[guid]::NewGuid().ToString('N')
-$backup=Join-Path $backupRoot ('ErrandMaster-v0.6.0-rc1-'+$stamp)
-$savedBackup=Join-Path $backupRoot ('SavedVariables-v0.6.0-rc1-'+$stamp)
+$backup=Join-Path $backupRoot ('ErrandMaster-v0.6.1-rc1-'+$stamp)
+$savedBackup=Join-Path $backupRoot ('SavedVariables-v0.6.1-rc1-'+$stamp)
+$stateBackup=Join-Path $backupRoot ('AddonStates-v0.6.1-rc1-'+$stamp)
 $backedUp=$false
 try{
- New-Item -ItemType Directory -Path $stage,$backupRoot,$savedBackup -Force|Out-Null
+ if((Get-PSDrive -Name B).Free -lt 104857600){throw 'Insufficient free space for staged upgrade'}
+ New-Item -ItemType Directory -Path $stage,$backupRoot,$savedBackup,$stateBackup -Force|Out-Null
  Expand-Archive -LiteralPath $Archive -DestinationPath $stage
  $candidate=Join-Path $stage 'ErrandMaster';$newCount=Assert-Inventory $candidate $expected.new
  $accountRoot=Join-Path $root 'WTF\Account'
+ foreach($state in $states){
+  $copy=Join-Path $stateBackup $state.FullName.Substring($accountRoot.Length+1)
+  New-Item -ItemType Directory -Path (Split-Path -Parent $copy) -Force|Out-Null
+  Copy-Item -LiteralPath $state.FullName -Destination $copy
+  if((Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash -ne $stateHashes[$state.FullName]){throw 'Addon-state backup mismatch'}
+ }
  $saved=@(Get-ChildItem $accountRoot -Recurse -File -Filter 'ErrandMaster.lua*'|Where-Object{$_.Directory.Name -eq 'SavedVariables' -and $_.Name -in @('ErrandMaster.lua','ErrandMaster.lua.bak')})
  foreach($file in $saved){
   if(($file.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0){throw 'Linked SavedVariables file'}
@@ -69,7 +77,7 @@ try{
  foreach($key in $providerBefore.Keys){if($providerAfter[$key]-ne $providerBefore[$key]){throw 'QuestieDB changed during upgrade'}}
  foreach($state in $states){if((Get-FileHash $state.FullName -Algorithm SHA256).Hash -ne $stateHashes[$state.FullName]){throw 'Addon state changed during upgrade'}}
  Assert-Stopped
- Write-Output "Installed $newCount ErrandMaster files; backup $backup ($oldCount files); SavedVariables backup $savedBackup ($($saved.Count) files); QuestieDB and addon states unchanged; game stopped"
+ Write-Output "Installed $newCount ErrandMaster files; backup $backup ($oldCount files); SavedVariables backup $savedBackup ($($saved.Count) files); addon-state backup $stateBackup ($($states.Count) files); QuestieDB and addon states unchanged; game stopped"
 }catch{
  if($backedUp){
   if(Test-Path $target){Move-Item $target (Join-Path $backupRoot ('ErrandMaster-rejected-'+[guid]::NewGuid().ToString('N')))}

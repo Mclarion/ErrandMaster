@@ -3,6 +3,8 @@ addon.db = {}
 local db = addon.db
 local SCHEMA = 5
 local MAX_WHEEL, MAX_FOLDER = 24, 8
+local wheelColors = {Copper=true, Amber=true, Green=true, Blue=true,
+  Teal=true, Violet=true, Rose=true, Slate=true}
 local wheelCategories = {"Repair", "Bank", "Auction House", "Mailbox", "Vendor",
   "Class Trainer", "Custom"}
 local function plain(value)
@@ -102,7 +104,9 @@ local function fresh()
     account = {}, characters = {}, locations = {}, trails = {}, settings = {
     optimize = true, useTomTom = true, defaultScope = "character", discoverServices = false,
     wheelRadius = 110, wheelIconSize = 46, wheelSlots = normalizeSlots(),
-    wheelScale = 1, wheelTheme = "Azure", trailRecording = false,
+    wheelScale = 1, wheelTheme = "Azure", wheelCategoryColors = {},
+    wheelArtReversed = false, windowPositions = {},
+    trailRecording = false,
     routeMode = "observed", showDestinations = true,
   }}
 end
@@ -166,6 +170,34 @@ function db:Initialize(character)
   self.trailStoreUnavailable = type(data.trails) ~= "table"
   data.settings = data.settings or {}
   data.settings.wheelSlots = normalizeSlots(data.settings.wheelSlots)
+  local colors, normalizedColors = data.settings.wheelCategoryColors, {}
+  if plain(colors) and type(colors) == "table" and not getmetatable(colors) then
+    local count = 0
+    for key, color in pairs(colors) do
+      if validCategory(key) and plain(color) and wheelColors[color] and count < MAX_WHEEL then
+        normalizedColors[key] = color
+        count = count + 1
+      end
+    end
+  end
+  data.settings.wheelCategoryColors = normalizedColors
+  if type(data.settings.wheelArtReversed) ~= "boolean" then
+    data.settings.wheelArtReversed = false
+  end
+  local positions = data.settings.windowPositions
+  local clean = {}
+  if plain(positions) and type(positions) == "table" and not getmetatable(positions) then
+    for _, key in ipairs({"main", "targets", "wheelSettings"}) do
+      local saved = positions[key]
+      if plain(saved) and type(saved) == "table" and not getmetatable(saved) and
+          plain(saved.x) and plain(saved.y) and type(saved.x) == "number" and
+          type(saved.y) == "number" and saved.x == saved.x and saved.y == saved.y and
+          saved.x >= 0 and saved.x <= 1 and saved.y >= 0 and saved.y <= 1 then
+        clean[key] = {x=saved.x, y=saved.y}
+      end
+    end
+  end
+  data.settings.windowPositions = clean
   if not plain(data.settings.wheelScale) or type(data.settings.wheelScale) ~= "number" or
       data.settings.wheelScale ~= data.settings.wheelScale or
       data.settings.wheelScale < .75 or data.settings.wheelScale > 1.5 then
@@ -320,6 +352,18 @@ function db:SetWheelAppearance(scale, theme)
       not ({Azure=true, Ember=true, Violet=true, Slate=true})[theme] then return false end
   self.data.settings.wheelScale = scale
   self.data.settings.wheelTheme = theme
+  return true
+end
+function db:SetWheelColor(category, color)
+  if not validCategory(category) or (color ~= nil and
+      (not plain(color) or not wheelColors[color])) then return false end
+  local colors = self.data.settings.wheelCategoryColors
+  if color and not colors[category] then
+    local count = 0
+    for _ in pairs(colors) do count = count + 1 end
+    if count >= MAX_WHEEL then return false end
+  end
+  colors[category] = color
   return true
 end
 

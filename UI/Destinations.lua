@@ -22,6 +22,7 @@ end
 
 local function title(value)
   if not safe(value) or type(value) ~= "string" then return "Unnamed" end
+  value = value:gsub("|", "/"):gsub("[%c]", " ")
   if #value <= 28 then return value end
   local cut = 28
   while cut > 0 do
@@ -87,13 +88,28 @@ function destinations:Create()
   if self.frame then return self.frame end
   local panel = CreateFrame("Frame", "ErrandMasterDestinations", UIParent, "BasicFrameTemplateWithInset")
   panel:SetSize(328, 390)
-  panel:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -24, -130)
+  panel:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 24, -130)
+  if addon.windowPosition then addon.windowPosition:Restore(panel, "targets") end
   panel:SetMovable(true)
   panel:EnableMouse(true)
   panel:RegisterForDrag("LeftButton")
   panel:SetClampedToScreen(true)
-  panel:SetScript("OnDragStart", function(frame) frame:StartMoving() end)
-  panel:SetScript("OnDragStop", function(frame) frame:StopMovingOrSizing() end)
+  panel:SetScript("OnDragStart", function(frame)
+    frame:StartMoving()
+    frame.errandMoving = true
+  end)
+  panel:SetScript("OnDragStop", function(frame)
+    if not frame.errandMoving then return end
+    frame:StopMovingOrSizing()
+    frame.errandMoving = nil
+    if addon.windowPosition then addon.windowPosition:Save(frame, "targets") end
+  end)
+  panel:SetScript("OnHide", function(frame)
+    if frame.errandMoving then
+      frame:StopMovingOrSizing(); frame.errandMoving = nil
+      if addon.windowPosition then addon.windowPosition:Save(frame, "targets") end
+    end
+  end)
   local closeButton=panel.CloseButton
   if (type(closeButton)=="table" or type(closeButton)=="userdata") and
       type(closeButton.HookScript)=="function" then

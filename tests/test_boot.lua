@@ -95,6 +95,20 @@ assert(addon.errands:All()[1].origin == "suggested")
 addon.errands:Delete(addon.errands:All()[1].id)
 SlashCmdList.ERRANDMASTER("wheel settings")
 assert(addon.radial.settingsFrame:IsShown() and addon.radial.bindButton)
+local savedWindowKeys, originalSave = {}, addon.windowPosition.Save
+addon.windowPosition.Save=function(_, _, key)
+  savedWindowKeys[#savedWindowKeys+1]=key; return true
+end
+for _, target in ipairs({{addon.ui.frame,'main'},
+    {addon.radial.settingsFrame,'wheelSettings'}}) do
+  target[1].scripts.OnDragStart(target[1])
+  target[1].scripts.OnHide(target[1])
+  assert(savedWindowKeys[#savedWindowKeys]==target[2] and
+    rawget(target[1], 'errandMoving')==nil,
+    'a hidden window saves its interrupted drag position: '..target[2]..
+      ' got '..tostring(savedWindowKeys[#savedWindowKeys]))
+end
+addon.windowPosition.Save=originalSave
 mouseY = 540
 InCombatLockdown = function() return false end
 CanMerchantRepair = function() return true end
@@ -211,6 +225,9 @@ for _, row in ipairs(addon.ui.rows) do
 end
 assert(hasDistance and addon.ui.summary.text:find("yd direct", 1, true),
   "the main route window must label straight-line distance")
+assert(not addon.ui.zone.text:find('|',1,true) and
+  not addon.ui.summary.text:find('|',1,true),
+  'rendered panel headings must not contain unescaped WoW formatting pipes')
 SlashCmdList.ERRANDMASTER("walking on")
 SlashCmdList.ERRANDMASTER("walking status")
 assert(messages[#messages]:find("Observed-walk routing",1,true))
@@ -226,13 +243,16 @@ assert(removed==1 and addon.navigation.handle==nil,
   "no route must clear only the previous ErrandMaster TomTom handle")
 local originalPlan=addon.Plan
 addon.Plan=function() return {{id='partial',name='Test',mapID=10,x=.4,y=.5,
-  walkStatus='partial-route',walkYards=15}} end
+  walkStatus='partial-route',walkYards=15}},{} end
 addon.navigation.provider={RemoveWaypoint=function(_, handle)
   assert(handle=="old-em"); removed=removed+1 end}
 addon.navigation.handle="old-em"
 SlashCmdList.ERRANDMASTER("next")
 assert(removed==2 and addon.navigation.handle==nil,
   "partial route must clear a stale ErrandMaster waypoint")
+addon.ui:Refresh()
+assert(addon.ui.rows[1].text:find('link unknown',1,true),
+  'partial observed yards must visibly warn that the destination connector is unknown')
 addon.Plan=originalPlan
 eventFrame.scripts.OnUpdate(eventFrame,.1) -- Finish indexing before timing navigation.
 assert(addon.npcs:IsReady() and #addon.npcs:LocationsOnMap(10,'Bank')==1)
@@ -286,6 +306,21 @@ assert(removed==2, 'waypoint revalidation waits for the scheduled tick')
 eventFrame.scripts.OnUpdate(eventFrame,1)
 assert(removed==3 and addon.navigation.handle==nil,
   'periodic validation clears an obsolete waypoint even if trails are off')
+addon.navigation.provider={RemoveWaypoint=function(_, handle)
+  assert(handle=='manual-em'); removed=removed+1 end}
+addon.navigation.handle='manual-em'
+assert(addon.ui.clearWaypointButton and addon.ui.clearWaypointButton.scripts.OnClick)
+addon.ui.clearWaypointButton.scripts.OnClick(addon.ui.clearWaypointButton)
+assert(removed==4 and addon.navigation.handle==nil,
+  'explicit clear removes only the ErrandMaster waypoint')
+addon.navigation.provider={RemoveWaypoint=function() error('TomTom temporarily unavailable') end}
+addon.navigation.handle='retry-em'
+addon.ui.clearWaypointButton.scripts.OnClick(addon.ui.clearWaypointButton)
+assert(addon.navigation.handle=='retry-em' and
+  addon.ui.message.text:find('Could not clear',1,true),
+  'a failed TomTom removal keeps the owned handle and reports failure')
+addon.navigation.provider={RemoveWaypoint=function() removed=removed+1 end}
+assert(addon.navigation:Clear() and removed==5)
 addon.Plan=originalPlan
 SlashCmdList.ERRANDMASTER("walking off")
 SlashCmdList.ERRANDMASTER("npcs bank")

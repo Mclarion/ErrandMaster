@@ -47,8 +47,8 @@ assert(type(addon.destinations.Restore)=='function' and addon.destinations:Resto
 assert(planned==1 and displayMap==nil, 'standalone list plans for the player map')
 local window=addon.destinations.frame
 assert(window.parent==UIParent and window.clamped and window.movable)
-assert(window.point[1]=='TOPRIGHT' and window.width<=340,
-  'own compact tracker starts on the right, away from RestedXP')
+assert(window.point[1]=='TOPLEFT' and window.width<=340,
+  'own compact tracker starts away from the usual right-side guide space')
 assert(addon.destinations.rows[1].width and addon.destinations.rows[1].width<=300,
   'tracker rows wrap inside the available width')
 assert(window.CloseButton.hooks and window.CloseButton.hooks.OnClick,
@@ -64,11 +64,18 @@ window.scripts.OnDragStart(window)
 assert(window.moving)
 window.scripts.OnDragStop(window)
 assert(not window.moving)
-ordered={{name='Bank',mapID=42,x=.25,y=.5,directYards=125},
+window.scripts.OnDragStart(window)
+local savedPosition
+addon.windowPosition={Save=function(_, _, key) savedPosition=key end}
+window.scripts.OnHide(window)
+assert(not window.moving and not window.errandMoving and savedPosition=='targets',
+  'closing a frame mid-drag must stop and persist its final position')
+ordered={{name='Bank|test',mapID=42,x=.25,y=.5,directYards=125},
          {name='Other',mapID=42,x=.9,y=.1}}
 deferred={{name='Mailbox',mapID=43},{name='Unlocated'}}
 assert(addon.destinations:Refresh())
-assert(addon.destinations.rows[1].text:find('1. Bank',1,true))
+assert(addon.destinations.rows[1].text:find('1. Bank/test',1,true) and
+  not addon.destinations.rows[1].text:find('|',1,true))
 assert(addon.destinations.rows[1].text:find('25.0, 50.0',1,true))
 assert(addon.destinations.rows[1].text:find('125 yd direct',1,true))
 assert(addon.destinations.rows[2].text:find('2. Other',1,true))

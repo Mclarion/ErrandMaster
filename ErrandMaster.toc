@@ -2,7 +2,7 @@
 ## Title: ErrandMaster - Smart Route Planner
 ## Notes: Same-map errands, active quests, map markers and route estimates for WoW Forever
 ## Author: ErrandMaster contributors
-## Version: 0.6.1-rc1
+## Version: 0.6.2-dev
 ## Dependencies: QuestieDB
 ## SavedVariables: ErrandMasterDB
 
@@ -19,6 +19,7 @@ Data/TrailRecorder.lua
 Routing/WalkGraph.lua
 Routing/RoutePlanner.lua
 Routing/Navigation.lua
+UI/WindowPosition.lua
 UI/RadialMenu.lua
 UI/WorldMap.lua
 UI/Destinations.lua

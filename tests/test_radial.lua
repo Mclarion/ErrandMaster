@@ -14,6 +14,7 @@ local function fakeFrame()
     if key == "SetText" then return function(self, value) self.text=value end end
     if key == "GetText" then return function(self) return self.text end end
     if key == "SetTexture" then return function(self, value) self.texture=value end end
+    if key == "SetRotation" then return function(self, value) self.rotation=value end end
     return function() end
   end})
   f.TitleText = {SetText=function() end}
@@ -35,11 +36,25 @@ addon.Print = function(_, value) printed[#printed+1] = value end
 local chunk = assert(loadfile("UI/RadialMenu.lua")); chunk("ErrandMaster", addon)
 local wheel = addon.radial
 assert(wheel:Open() and wheel.frame:IsShown())
+assert(wheel.slots[1].sector and wheel.slots[1].glow and
+  wheel.slots[1].sector.texture:find('WheelSector07.blp',1,true))
+assert(wheel.slots[1].glow.texture:find('WheelGlow07.blp',1,true))
+assert(wheel.slots[1].label.text:find('QUEUE',1,true))
+assert(wheel.slots[2].sector.rotation<0)
+addon.db.data.settings.wheelArtReversed=true
+wheel:Layout()
+assert(wheel.slots[2].sector.rotation>0)
+addon.db.data.settings.wheelArtReversed=false
+wheel.slots[2].sector.SetRotation=function() error('not supported') end
+wheel:Layout()
+assert(not wheel.slots[1].sector.shown and not wheel.slots[2].glow.shown and
+  wheel.slots[2].texture.shown, 'unsupported rotation falls back to usable icons')
+wheel.slots[2].sector.SetRotation=nil
 UnitClass = function() return "Hunter", "HUNTER" end
 wheel:Layout()
 assert(wheel.slots[2].texture.texture:find("Textures\\Bank.blp", 1, true))
 assert(wheel.slots[6].texture.texture:find("Textures\\ClassHunter.blp", 1, true))
-assert(wheel.slots[6].label.text == "Hunter Trainer")
+assert(wheel.slots[6].label.text:find("Hunter Trainer",1,true))
 addon.Position=function() return 10,.1,.1 end
 addon.MapWorldSize=function() return 1000,1000 end
 addon.discovery={PlayerClass=function() return 'Hunter' end}
@@ -86,9 +101,14 @@ wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
 assert(#opened == 1 and not wheel.frame:IsShown())
 assert(wheel:Open()); wheel.frame.scripts.OnKeyDown(wheel.frame, "ESCAPE")
 assert(not wheel.frame:IsShown() and cursorCalls[#cursorCalls] == "restore")
+SetCursor=function() error('cursor unavailable') end
+assert(wheel:Open() and wheel.frame:IsShown())
+wheel:Close()
+SetCursor=function(path) cursorCalls[#cursorCalls+1] = path or 'restore'; return true end
 mouseX,mouseY=5,8
 assert(wheel:Open())
-assert(wheel.centerX == 5 and wheel.centerY == 8)
+assert(wheel.centerX >= wheel.radius and wheel.centerY >= wheel.radius,
+  'full wheel must remain on screen by the edge')
 wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
 assert(#opened == 1 and not wheel.frame:IsShown())
 mouseX,mouseY=960,540
@@ -265,7 +285,7 @@ wheel.slotValue:SetText("Supply run")
 wheel.applySlotButton.scripts.OnClick(wheel.applySlotButton)
 assert(addon.db.data.settings.wheelSlots[2].category == "Supply run")
 assert(wheel:Open())
-assert(wheel.slots[2].label.text == "Supply run")
+assert(wheel.slots[2].label.text:find("Supply run",1,true))
 mouseX,mouseY=960+110*math.cos(math.pi/2-2*math.pi/7),540+110*math.sin(math.pi/2-2*math.pi/7)
 wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
 assert(opened[#opened] == "Supply run")
@@ -286,14 +306,14 @@ end
 assign("1", "spell", "1234")
 assert(addon.db.data.settings.wheelSlots[1].id == 1234)
 mouseX,mouseY=960,540
-assert(wheel:Open() and wheel.slots[1].label.text == "Safe Spell")
+assert(wheel:Open() and wheel.slots[1].label.text:find("Safe Spell",1,true))
 assert(wheel.slots[1].texture.texture == 135000)
 mouseY=650; wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
 assert(printed[#printed]:find("Safe Spell",1,true) and printed[#printed]:find("not executed",1,true))
 assign("3", "macro", "7")
 assert(addon.db.data.settings.wheelSlots[3].id == 7)
 mouseX,mouseY=960,540
-assert(wheel:Open() and wheel.slots[3].label.text == "Safe Macro")
+assert(wheel:Open() and wheel.slots[3].label.text:find("Safe Macro",1,true))
 local angle = math.pi/2-2*2*math.pi/7
 mouseX,mouseY=960+110*math.cos(angle),540+110*math.sin(angle)
 wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
@@ -313,13 +333,13 @@ C_Spell, C_Macro = nil, nil
 assign("4", "spell", "1234")
 assign("5", "macro", "7")
 mouseX,mouseY=960,540
-assert(wheel:Open() and wheel.slots[4].label.text == "Spell #1234"
-  and wheel.slots[5].label.text == "Macro #7")
+assert(wheel:Open() and wheel.slots[4].label.text:find("Spell #1234",1,true)
+  and wheel.slots[5].label.text:find("Macro #7",1,true))
 wheel:Close()
 local protectedNamespace = setmetatable({}, {__index=function() error("protected API namespace") end})
 C_Spell, C_Macro = protectedNamespace, protectedNamespace
-assert(wheel:Open() and wheel.slots[4].label.text == "Spell #1234"
-  and wheel.slots[5].label.text == "Macro #7",
+assert(wheel:Open() and wheel.slots[4].label.text:find("Spell #1234",1,true)
+  and wheel.slots[5].label.text:find("Macro #7",1,true),
   "blocked metadata APIs must leave wheel selection usable")
 wheel:Close()
 assign("6", "macro", "7")
