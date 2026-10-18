@@ -34,18 +34,43 @@ function addon:Position()
       y < 0 or y > 1 then return map end
   return map, x, y
 end
+local function validWorldSize(width, height)
+  return type(width)=='number' and type(height)=='number' and
+    width==width and height==height and width>0 and height>0 and
+    width<=10000000 and height<=10000000
+end
 function addon:MapWorldSize(mapID)
-  if not safe(mapID) or type(mapID) ~= "number" or not safe(C_Map) then return end
-  local available, method = pcall(function() return C_Map.GetMapWorldSize end)
-  if not available or not safe(method) or type(method) ~= "function" then return end
-  local ok, width, height = pcall(method, mapID)
-  if not ok or not safe(width) or not safe(height) or
-      type(width) ~= "number" or type(height) ~= "number" or
-      width ~= width or height ~= height or width <= 0 or height <= 0 or
-      width > 10000000 or height > 10000000 then return end
-  return width, height
+  if not safe(mapID) or type(mapID) ~= 'number' then return end
+  if safe(C_Map) then
+    local available, method = pcall(function() return C_Map.GetMapWorldSize end)
+    if available and safe(method) and type(method) == 'function' then
+      local ok, width, height = pcall(method, mapID)
+      if ok and safe(width) and safe(height) and validWorldSize(width, height) then
+        return width, height
+      end
+    end
+  end
+  -- Some clients have no native size API. Two guarded world projections
+  -- establish yard scale only when they share the same instance and axes.
+  if not self.navigation or type(self.navigation.WorldPosition) ~= 'function' then return end
+  local ok0, instance0, north0, west0 = pcall(self.navigation.WorldPosition,
+    self.navigation, mapID, 0, 0)
+  local ok1, instance1, north1, west1 = pcall(self.navigation.WorldPosition,
+    self.navigation, mapID, .5, .5)
+  if not ok0 or not ok1 or not safe(instance0) or not safe(instance1) or
+      type(instance0) ~= 'number' or instance0 < 0 or instance0 ~= instance1 or
+      not safe(north0) or not safe(north1) or not safe(west0) or not safe(west1) or
+      type(north0) ~= 'number' or type(north1) ~= 'number' or
+      type(west0) ~= 'number' or type(west1) ~= 'number' then return end
+  local width, height = 2*(west0-west1), 2*(north0-north1)
+  if validWorldSize(width, height) then return width, height end
 end
 function addon:ProfessionFilters()
+  if self.db and type(self.db.GetWheelProfessions)=='function' then
+    local ok, configured=pcall(self.db.GetWheelProfessions,self.db)
+    if ok and type(configured)=='table' then return configured,'configured' end
+  end
+  -- Minimal/older database mocks retain the legacy profession path.
   local manual=self.db:ProfessionOverrides()
   if #manual>0 then return manual,"manual" end
   if not safe(GetProfessions) or type(GetProfessions)~="function" or
@@ -94,28 +119,50 @@ function addon:Plan(displayMap)
   end
   local locations = {}
   for _, place in ipairs(self.locations:All()) do locations[#locations+1] = place end
-  if map and self.npcs and self.npcs:IsReady() then
+  local sequential=map and x and y and self.zoneSearch and self.zoneSearch.RouteContext
+  if not sequential and map and self.npcs and self.npcs:IsReady() then
     for _, place in ipairs(self.npcs:LocationsOnMap(map)) do
       locations[#locations+1] = place
     end
   end
-  local ordered, deferred = self.route:Plan(self.errands:All(), map, x, y,
-    settings.optimize, locations, self.quests:OnMap(map), width, height,
-    walkContext)
+  local ordered,deferred
+  local requests=self.errands:All()
+  if sequential then
+    local questPOIs,questMaps={},{}
+    local function includeQuests(questMap)
+      if questMaps[questMap] then return end
+      questMaps[questMap]=true
+      for _,poi in ipairs(self.quests:OnMap(questMap)) do questPOIs[#questPOIs+1]=poi end
+    end
+    includeQuests(map)
+    for _,request in ipairs(requests) do
+      if request.questID and not request.completed and type(request.mapID)=='number' and
+          request.mapID>=1 and request.mapID%1==0 then includeQuests(request.mapID) end
+    end
+    local origin={mapID=map,x=x,y=y,floor=walkContext and walkContext.floor,
+      worldMapID=walkContext and walkContext.worldMapID,wz=walkContext and walkContext.wz}
+    ordered,deferred=self.route:Sequence(requests,origin,settings.optimize,
+      questPOIs,self.zoneSearch:RouteContext(locations,walkContext))
+  else
+    ordered,deferred=self.route:Plan(requests,map,x,y,settings.optimize,
+      locations,self.quests:OnMap(map),width,height,walkContext)
+  end
   if self.taxiAdvice and self.taxiAdvice.open then
-    for i,item in ipairs(deferred) do
-      if item.mapID and item.mapID~=map then
-        local node=self.taxiAdvice:ForMap(item.mapID)
-        if node then
-          local hint={}
-          for key,value in pairs(item) do hint[key]=value end
-          hint.taxiFlightNode=node
-          deferred[i]=hint
+    for _,group in ipairs({ordered,deferred}) do
+      for i,item in ipairs(group) do
+        if item.mapID and item.mapID~=map then
+          local node=self.taxiAdvice:ForMap(item.mapID)
+          if node then
+            local hint={}
+            for key,value in pairs(item) do hint[key]=value end
+            hint.taxiFlightNode=node
+            group[i]=hint
+          end
         end
       end
     end
   end
-  if map and x and y and self.zoneSearch and self.npcs and
+  if not sequential and map and x and y and self.zoneSearch and self.npcs and
       self.npcs:IsReady() and #deferred>0 then
     local cache={}
     for i,item in ipairs(deferred) do
@@ -139,7 +186,7 @@ function addon:Plan(displayMap)
           local best
           for _,filter in ipairs(filters) do
             local ok,matches=pcall(self.zoneSearch.Nearby,self.zoneSearch,
-              map,x,y,filter,2000,1)
+              map,x,y,filter,wanted=="Auction House" and 10000 or 2000,1)
             local candidate=ok and matches and matches[1]
             if candidate and (not best or
                 candidate.directYards<best.directYards) then best=candidate end
@@ -168,6 +215,7 @@ function addon:ActivateTarget(id)
   if id ~= nil then
     local item = self.errands:Get(id)
     if not item or item.completed then return false end
+    self.errands:Reorder(id,1)
   end
   bucket.activeErrandId = id
   if self.navigation then self.navigation.paused = nil end
@@ -176,27 +224,64 @@ function addon:ActivateTarget(id)
 end
 function addon:ActiveTarget(ordered, deferred)
   local bucket = self.db.data.characters[self.db.character]
-  local id = bucket.activeErrandId
-  if id then
-    local saved = self.errands:Get(id)
-    if not saved or saved.completed then bucket.activeErrandId = nil
-    else
-      for _, group in ipairs({ordered or {}, deferred or {}}) do
-        for _, item in ipairs(group) do if item.id == id then return item end end
-      end
-      return saved -- Off-map or unlocated: keep intent but do not invent a waypoint.
+  -- The display order is authoritative, including old persisted selections.
+  -- Explicit activation moves an item to slot one rather than hiding a second
+  -- navigation order behind the sidebar. Unlocated first rows remain honest.
+  bucket.activeErrandId = nil
+  for _, item in ipairs(self.route:DisplayOrder(ordered, deferred)) do
+    local saved = item.id and self.errands:Get(item.id)
+    if saved and not saved.completed then
+      bucket.activeErrandId = item.id
+      return item
     end
   end
-  for _, item in ipairs(ordered or {}) do
-    local saved = item.id and self.errands:Get(item.id)
-    if saved and not saved.completed then return item end
+end
+-- Arrival consumes only the queue entry, not evidence of service or quest completion.
+function addon:CheckArrival(map, x, y)
+  if not map or not x or not y or type(UnitOnTaxi) ~= 'function' then return false end
+  local taxiOK, taxi = pcall(UnitOnTaxi, 'player')
+  if not taxiOK or not safe(taxi) or taxi ~= false then return false end
+  local width, height = self:MapWorldSize(map)
+  if not width or not height then return false end
+  local ok, ordered, deferred = pcall(self.Plan, self)
+  if not ok or type(ordered) ~= 'table' then return false end
+  local target = self:ActiveTarget(ordered, deferred)
+  if not target or not target.id or target.mapID ~= map or
+      target.approximate or target.projectedWaypoint or
+      type(target.x) ~= 'number' or type(target.y) ~= 'number' or
+      not safe(target.x) or not safe(target.y) or
+      target.x ~= target.x or target.y ~= target.y or
+      target.x < 0 or target.x > 1 or target.y < 0 or target.y > 1 then return false end
+  if target.floor ~= nil then
+    -- TrailRecorder reports floor=0 when the native API cannot identify a floor.
+    -- Zero is not evidence that the player is on floor zero.
+    if type(target.floor) ~= 'number' or target.floor < 1 or
+        target.floor > 50 or target.floor % 1 ~= 0 then return false end
+    local sampleOK, sample = pcall(function() return self.trails:NativeSample() end)
+    if not sampleOK or not sample or sample.uiMapID ~= map or
+        sample.floor ~= target.floor then return false end
+  else
+    -- Only an identified, ungrouped outdoor zone can use 2D coordinates alone.
+    -- Missing map metadata, grouped floors and dungeon/micro maps are ambiguous.
+    local ok, outdoor = pcall(function()
+      if not C_Map or type(C_Map.GetMapInfo) ~= 'function' or
+          type(C_Map.GetMapGroupID) ~= 'function' then return false end
+      local info = C_Map.GetMapInfo(map)
+      return info and info.mapType == 3 and C_Map.GetMapGroupID(map) == nil
+    end)
+    if not ok or not outdoor then return false end
   end
-  local map = self:Position()
-  for _, item in ipairs(deferred or {}) do
-    local saved = item.id and self.errands:Get(item.id)
-    if saved and not saved.completed and map and item.mapID == map and
-        item.x and item.y then return item end
-  end
+  local dx, dy = (x-target.x)*width, (y-target.y)*height
+  -- Tolerate floating-point representation at exactly two yards only.
+  if math.sqrt(dx*dx + dy*dy) > 2 + 0.000001 then return false end
+  local saved = self.errands:Get(target.id)
+  if not saved or saved.completed then return false end
+  self.errands:Delete(saved.id)
+  local bucket = self.db.data.characters[self.db.character]
+  if bucket.activeErrandId == saved.id then bucket.activeErrandId = nil end
+  self.movementOrigin = {map=map,x=x,y=y}
+  self:Refresh()
+  return true
 end
 function addon:MovementTick()
   local taxiKnown, taxi = false, false
@@ -217,6 +302,7 @@ function addon:MovementTick()
     if not map or not x or not y then return false end
     self.movementTaxi = false
     self.movementOrigin = {map=map,x=x,y=y}
+    if self:CheckArrival(map, x, y) then return true end
     self:Refresh() -- A landing may move the player even without a zone event.
     return true
   end
@@ -225,6 +311,7 @@ function addon:MovementTick()
     self.movementOrigin = nil
     return false
   end
+  if self:CheckArrival(map, x, y) then return true end
   local prior = self.movementOrigin
   self.movementOrigin = prior or {map=map, x=x, y=y}
   if not prior then return false end
@@ -234,9 +321,9 @@ function addon:MovementTick()
     return true
   end
   local width, height = self:MapWorldSize(map)
-  if not width then return false end -- No yard scale means no honest 50-yard test.
+  if not width then return false end -- No yard scale means no honest 10-yard test.
   local dx, dy = (x-prior.x)*width, (y-prior.y)*height
-  if dx*dx + dy*dy < 2500 then return false end
+  if dx*dx + dy*dy < 100 then return false end
   self.movementOrigin = {map=map, x=x, y=y}
   self:Refresh()
   return true
@@ -247,13 +334,17 @@ function addon:RevalidateNavigation(ordered, deferred)
   if not ordered then
     local ok, result, pending = pcall(self.Plan, self)
     if not ok or not safe(result) or type(result) ~= "table" then
-      self.navigation:Clear(); return
+      self.navigation:Clear()
+      if self.navigationArrow then self.navigationArrow:Refresh() end
+      return
     end
     ordered, deferred = result, pending
   end
   local target = self:ActiveTarget(ordered, deferred)
   local map = self:Position()
   self.navigation:Next(target and target.mapID == map and target or nil)
+  if target and target.mapID ~= map then self.navigation.target = target end
+  if self.navigationArrow then self.navigationArrow:Refresh() end
 end
 function addon:NavigateNext()
   self.navigation.paused = nil -- Explicit navigation resumes after a manual Clear pin.
@@ -261,27 +352,43 @@ function addon:NavigateNext()
   local nextItem = self:ActiveTarget(route, deferred)
   if not nextItem then
     if not self.navigation:Clear() then
-      self:Print("Old ErrandMaster TomTom pin could not be removed; clear it in TomTom.")
+      self:Print('Old ErrandMaster TomTom pin could not be removed; clear it in TomTom.')
     end
-    self:Print("No active target with a usable position on this map.")
+    if self.navigationArrow then self.navigationArrow:Refresh() end
+    self:Print('No active target with a usable position on this map.')
     return
   end
   local map = self:Position()
-  local used = self.navigation:Next(nextItem.mapID == map and nextItem or nil)
+  local used, status = self.navigation:Next(nextItem.mapID == map and nextItem or nil)
+  if nextItem.mapID ~= map then self.navigation.target = nextItem end
+  if self.navigationArrow then self.navigationArrow:Refresh() end
   if not nextItem.mapID or nextItem.mapID ~= map or not nextItem.x then
-    self:Print("Active target has no same-map coordinates. No TomTom arrow set.")
+    self:Print('Active target has no same-map coordinates. Direction unknown.')
+    local nearby = nextItem.nearbyZoneCandidate
+    if type(nearby) == "table" and safe(nearby) then
+      local ok, zone, distance = pcall(function()
+        return nearby.zoneName, nearby.directYards
+      end)
+      if ok and safe(zone) and safe(distance) and type(zone) == "string" and
+          #zone > 0 and #zone <= 80 and not zone:find("[%c|]") and
+          type(distance) == "number" and distance == distance and
+          distance >= 0 and distance <= 10000 then
+        self:Print(string.format("Projected candidate in %s, ~%.0f yd straight-line; route unknown.",
+          zone, distance))
+      end
+    end
     return
   end
-  self:Print(string.format("Next: %s (map %d, %.1f, %.1f%s). %s", nextItem.name,
-    nextItem.mapID, nextItem.x*100, nextItem.y*100,
-    nextItem.approximate and "; approximate player position" or "",
-    used and "TomTom waypoint set." or (self.navigation.handle and
-      "Old ErrandMaster pin could not be removed; no new pin set." or
-      "Use the displayed coordinates; no compatible TomTom waypoint.")))
-  if nextItem.walkStatus ~= "known-route" then
-    self:Print(used and
-      "TomTom points directly at the target; walking path unknown, not a proven route." or
-      "Walking path unknown; coordinates indicate direction, not a proven route.")
+  self:Print(string.format('Next: %s (map %d, %.1f, %.1f%s). %s',
+    nextItem.name, nextItem.mapID, nextItem.x*100, nextItem.y*100,
+    nextItem.approximate and '; approximate position' or '',
+    used and (status == 'observed-route' and
+      'Following observed connectors only; unobserved links remain unknown.' or
+      'Native direct-bearing (DIRECT); route unknown.') or
+      (status == 'old-pin' and 'Old owned pin could not be removed.' or
+      'Native direction unavailable.')))
+  if nextItem.walkStatus ~= 'known-route' then
+    self:Print('Walking path unknown; coordinates indicate a point, not a proven route.')
   end
   if nextItem.directYards then
     self:Print(string.format("Approximately %.0f yd straight-line; actual travel may be longer.",
@@ -295,53 +402,9 @@ function addon:NavigateNext()
   end
 end
 function addon:FinishTargetOnInteraction(event, questID)
-  local ordered, deferred = self:Plan()
-  local target = self:ActiveTarget(ordered, deferred)
-  if not target or not target.id then return false end
-  local saved = self.errands:Get(target.id)
-  if not saved or saved.completed then return false end
-  local category = saved.category or ""
-  local matched = event == "MAIL_SHOW" and category == "Mailbox" or
-    event == "BANKFRAME_OPENED" and category == "Bank" or
-    event == "AUCTION_HOUSE_SHOW" and category == "Auction House" or
-    event == "TRAINER_SHOW" and category:find("Trainer", 1, true) ~= nil or
-    event == "MERCHANT_SHOW" and (category:find("Vendor", 1, true) ~= nil or
-      category == "Repair" and type(CanMerchantRepair) == "function" and
-      select(2, pcall(CanMerchantRepair)) == true) or
-    event == "QUEST_TURNED_IN" and saved.questID ~= nil and
-      saved.questID == questID
-  if not matched and event == "GOSSIP_SHOW" and category == "NPC Visit" and
-      (saved.npcID or target.npcID) then
-    matched = true -- Only an explicit NPC-visit errand; identity checked below.
-  end
-  if not matched then return false end
-  local confirmedNPC = false
-  if saved.npcID and target.npcID and saved.npcID ~= target.npcID then return false end
-  local expectedNPC = target.npcID or saved.npcID
-  if expectedNPC and event ~= "QUEST_TURNED_IN" then
-    if not safe(expectedNPC) or type(expectedNPC) ~= "number" then return false end
-    local ok, guid = pcall(function() return UnitGUID and UnitGUID("target") end)
-    local id = ok and safe(guid) and type(guid) == "string" and
-      guid:match("^Creature%-%d+%-%d+%-%d+%-%d+%-(%d+)%-%x+$")
-    if not id or tonumber(id) ~= expectedNPC then return false end
-    confirmedNPC = true
-  end
-  if target.mapID and target.x and target.y and not confirmedNPC and
-      event ~= "QUEST_TURNED_IN" then
-    local map, x, y = self:Position()
-    local width, height
-    if map then width, height = self:MapWorldSize(map) end
-    if map ~= target.mapID or not x or not y or not width or not height or
-        ((x-target.x)*width)^2 + ((y-target.y)*height)^2 > 25^2 then return false end
-  elseif not target.mapID and not confirmedNPC and
-      event ~= "QUEST_TURNED_IN" then
-    return false -- A generic interaction cannot identify an unlocated errand.
-  end
-  self.errands:Complete(saved.id)
-  self.db.data.characters[self.db.character].activeErrandId = nil
-  self:Refresh()
-  self:Print("Done: " .. saved.name:gsub("|", "/"):gsub("[%c]", " "))
-  return true
+  -- UI interactions are neither arrival evidence nor proof a task was done.
+  -- Only CheckArrival consumes a queue entry; it never sets completed.
+  return false
 end
 local function identity()
   local name, realm
@@ -465,11 +528,29 @@ function addon:Command(message)
   elseif command == "wheel" then
     if argument == "settings" then
       if self.addonSettings then self.addonSettings:Open() end
-    elseif not self.radial:Open() then self:Print("Wheel unavailable in combat or without cursor position.") end
+    elseif self.radial then
+      local frame=self.radial.frame
+      local wasShown=frame and frame.IsShown and frame:IsShown()
+      if not self.radial:Open() and not wasShown then
+        self:Print("Wheel unavailable in combat or without cursor position.")
+      end
+    end
   elseif command == "discover" then
     local value = argument and argument:lower()
-    if value ~= "on" and value ~= "off" then
-      self:Print("Use /em discover on or /em discover off. Recording is character-only.")
+    if value == "status" then
+      self:Print("Passive service discovery "..(self.db.data.settings.discoverServices and 'on' or 'off')..".")
+      local report=self.discovery.lastReport
+      if not report then self:Print("No service observation report this session.")
+      else
+        local saved,failed={},{}
+        for category in pairs(report.saved) do saved[#saved+1]=category end
+        for category,reason in pairs(report.failures) do failed[#failed+1]=category..'='..reason end
+        table.sort(saved); table.sort(failed)
+        self:Print("Last observation saved: "..(#saved>0 and table.concat(saved,', ') or 'none'))
+        if #failed>0 then self:Print("Partial observation: "..table.concat(failed,', ')) end
+      end
+    elseif value ~= "on" and value ~= "off" then
+      self:Print("Use /em discover on, off or status. Recording is character-only.")
     else
       self.db.data.settings.discoverServices = value == "on"
       self:Refresh()
@@ -490,7 +571,27 @@ function addon:Command(message)
     end
   elseif command == "npcs" then
     local status = self.npcs:Status()
-    if argument == "status" or not self.npcs:IsReady() then
+    local explain=argument and argument:match("^explain%s+(.+)$")
+    if explain and #explain<=80 then
+      local map=self:Position()
+      local report=self.npcs:Diagnostics(map,explain)
+      self:Print(string.format("NPC coverage map %s [%s]: %s; %d candidate spawns; %d faction-excluded; inventory %s%s.",
+        tostring(map or 'unknown'),explain,report.state,report.candidates,report.factionExcluded,
+        report.inventoryEvidence,report.mapLimited and '; map incomplete' or ''))
+      if report.limited then self:Print("Provider coverage limited: "..(report.reason or 'incomplete records')) end
+      self:Print("No inventory evidence means unknown coverage, not proof that no seller exists. Candidate evidence is not live stock or a walking route.")
+      local failures={}
+      for code,count in pairs(report.issues) do failures[#failures+1]=code..'='..count end
+      table.sort(failures)
+      if #failures>0 then self:Print("Catalog-wide issues: "..table.concat(failures,', ')) end
+      local mapFailures={}
+      for code,count in pairs(report.mapIssues or {}) do mapFailures[#mapFailures+1]=code..'='..count end
+      table.sort(mapFailures)
+      if #mapFailures>0 then self:Print("Map issues: "..table.concat(mapFailures,', ')) end
+    elseif status.normalizing then
+      self:Print(string.format("QuestieDB Forever: normalizing provider IDs (%d entries inspected); record totals pending.",
+        status.normalizedEntries))
+    elseif argument == "status" or not self.npcs:IsReady() then
       self:Print(string.format("QuestieDB Forever NPC catalog: %s (%d/%d IDs)%s.",
         status.state, status.processed, status.total,
         status.reason and "; " .. status.reason or ""))
@@ -528,7 +629,7 @@ function addon:Command(message)
         if argument and argument~="" and argument~="all" and not wanted then
           self:Print("NPCs: /em npcs bank, repair, vendor, trainer, auction, flight, innkeeper")
           self:Print("NPCs: /em npcs class <name>, profession <name>, near <service>")
-          self:Print("NPCs: /em npcs find <text>, status, all; add: /em npc add <id>")
+          self:Print("NPCs: /em npcs find <text>, explain <service>, status, all; add: /em npc add <id>")
         elseif nearest and not x then
           self:Print("Nearest NPCs need a readable current-map position.")
         else
@@ -659,7 +760,9 @@ local function initialize()
         else addon.movementOrigin = nil end
       end
       local recording = addon.trails and addon.trails:IsEnabled()
-      if not recording and not addon.navigation.handle then
+      local activeNavigation = addon.navigation and addon.navigation.target and
+        not addon.navigation.paused
+      if not recording and not addon.navigation.handle and not activeNavigation then
         elapsed = 0; return
       end
       elapsed = elapsed + dt
@@ -699,9 +802,9 @@ events:SetScript("OnEvent", function(_, event, name)
       event == "TRAINER_SHOW") then
     local ok, err = pcall(addon.discovery.HandleEvent, addon.discovery, event)
     if not ok and addon.db.data.settings.debug then addon:Print("Discovery: " .. tostring(err)) end
-    addon:FinishTargetOnInteraction(event)
+
   elseif addon.db.data and (event == "GOSSIP_SHOW" or event == "QUEST_TURNED_IN") then
-    addon:FinishTargetOnInteraction(event, name)
+    -- No implicit completion on gossip or quest/service UI events.
   elseif addon.db.data and (event == "ZONE_CHANGED_NEW_AREA" or
       event == "PLAYER_ENTERING_WORLD" or event == "QUEST_LOG_UPDATE" or
       event == "QUEST_POI_UPDATE" or event == "QUEST_WATCH_UPDATE") then

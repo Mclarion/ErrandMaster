@@ -26,7 +26,7 @@ local function validPoint(point)
   end)
   local worldOK = plain(world) and plain(z) and
     ((world == nil and z == nil) or
-      (integer(world, 1, 10000000) and number(z, -10000000, 10000000)))
+      (integer(world, 0, 10000000) and number(z, -10000000, 10000000)))
   return ok and worldOK and integer(map, 1, 10000000) and integer(floor, 0, 50) and
     number(x, 0, 1) and number(y, 0, 1), map, floor, x, y, world, z
 end

@@ -1,3 +1,5 @@
+--[[ Retired fixture for the removed expert/color/flip studio. New assertions
+-- live in tests/test_wheel_input.lua, invoked below by the existing runner.
 local legacySlots = {}
 for i, category in ipairs({'Repair','Bank','Auction House','Mailbox','Vendor',
   'Class Trainer','Custom'}) do
@@ -49,16 +51,56 @@ assert(wheel:StartCapture() and wheel.capture:IsShown() and
 wheel.capture.scripts.OnKeyDown(wheel.capture, 'ESCAPE')
 assert(not wheel.capture:IsShown(), 'Escape cancels binding capture')
 assert(wheel.slots[1].sector and wheel.slots[1].glow and
-  wheel.slots[1].sector.texture:find('WheelSector07.blp',1,true))
-assert(wheel.slots[1].glow.texture:find('WheelGlow07.blp',1,true))
-assert(wheel.trim.texture:find('WheelTrim07.blp',1,true) and
-  wheel.centerArt.texture:find('WheelCenter.blp',1,true),
-  'decorative gilt rim and map hub follow the active slot count')
+  wheel.slots[1].sector.texture:find('WheelPatternT0N07.blp',1,true))
+assert(wheel.slots[1].glow.texture:find('WheelBorderT0N07.blp',1,true))
+assert(wheel.centerArt.texture:find('WheelCenter.blp',1,true),
+  'supplied emblem occupies the hub')
+assert(wheel.slots[1].medallion.texture:find('MedallionRedInactive.blp',1,true),
+  'matching palette uses the supplied red inactive medallion')
+assert(wheel.slots[2].medallion.texture:find('MedallionBlueInactive.blp',1,true))
+assert(wheel.slots[5].medallion.texture:find('MedallionGreenInactive.blp',1,true),
+  'unmatched palette uses green')
+assert(wheel.slots[3].medallion.texture:find('MedallionPurpleInactive.blp',1,true) and
+  wheel.slots[4].medallion.texture:find('MedallionOrangeInactive.blp',1,true) and
+  wheel.slots[7].medallion.texture:find('MedallionPinkInactive.blp',1,true))
+assert(wheel.slots[6].medallion.texture:find('MedallionCyanInactive.blp',1,true),
+  'cyan inactive art uses its matching supplied state')
+wheel:SetSelection(6)
+assert(wheel.slots[6].medallion.texture:find('MedallionCyanActive.blp',1,true),
+  'supplied cyan active art replaces the green fallback only in its available state')
+wheel:SetSelection(nil)
+addon.db.data.settings.wheelCategoryColors={Repair='Slate'}
+wheel:Layout(); wheel:SetSelection(1)
+assert(wheel.slots[1].medallion.texture:find('MedallionWhiteActive.blp',1,true))
+wheel:SetSelection(nil)
+assert(wheel.slots[1].medallion.texture:find('MedallionWhiteInactive.blp',1,true),
+  'white inactive now uses matching supplied art')
+addon.db.data.settings.wheelCategoryColors={}
+wheel:Layout()
+assert(wheel.slots[1].medallion.point[5]>wheel.centerY and
+  wheel.slots[1].medallion.point[5]<wheel.centerY+wheel.tiers[1].outerRadius+24,
+  'jewel stays on the outer rim')
+wheel.slots[1].medallion.rotation=1
+wheel:Layout()
+assert(wheel.slots[1].medallion.rotation==0,
+  'reusing a previously rotated jewel restores the upward orientation')
+local medallionAngle=wheel.tiers[1].angles[2]
+assert(math.abs(wheel.slots[2].medallion.rotation -
+  (medallionAngle-math.pi/2))<.001 and
+  wheel.slots[2].medallion.rotation==wheel.slots[2].sector.rotation,
+  'medallion and sector rotate together so the ornament points toward the hub')
+assert(math.abs(wheel.slots[2].sector.w - wheel.tiers[1].outerRadius*2*math.sqrt(2))<.001 and
+  math.abs(wheel.slots[2].medallion.w - wheel.slots[1].medallion.w)<.001,
+  'rotation compensation keeps the pie and rim ornaments at their intended physical size')
+wheel:SetSelection(1)
+assert(wheel.slots[1].medallion.texture:find('MedallionRedActive.blp',1,true),
+  'hover lights the matching medallion without tinting the icon')
+wheel:SetSelection(nil)
 assert(wheel.slots[1].texture.texture:find('PackRepair.blp',1,true) and
   wheel.slots[3].texture.texture:find('PackAuctionHouse.blp',1,true) and
   wheel.slots[4].texture.texture:find('PackMailbox.blp',1,true) and
-  wheel.slots[5].texture.texture:find('ServiceVendor.blp',1,true),
-  'service slots use readable bundled glyphs rather than red question marks')
+  wheel.slots[5].texture.texture:find('PackProfessionVendor.blp',1,true),
+  'Vendor has supplied default art instead of a generic service glyph')
 assert(wheel.slots[1].label.text=='Repair' and
   wheel.detailText.text:find('Choose a service',1,true))
 assert(wheel.slots[2].sector.rotation<0)
@@ -179,9 +221,9 @@ local vendorAngle = math.pi/2 - 4*2*math.pi/7
 mouseX, mouseY = 960 + 110*math.cos(vendorAngle), 540 + 110*math.sin(vendorAngle)
 wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
 assert(wheel.submenu == "Vendor" and wheel.frame:IsShown())
-local ammoAngle = math.pi/2 - 4*math.pi/6
-mouseX = wheel.centerX + 110*math.cos(ammoAngle)
-mouseY = wheel.centerY + 110*math.sin(ammoAngle)
+local ammoAngle = wheel.tiers[2].angles[3]
+mouseX = wheel.centerX + wheel.radius*math.cos(ammoAngle)
+mouseY = wheel.centerY + wheel.radius*math.sin(ammoAngle)
 wheel.frame.scripts.OnMouseDown(wheel.frame, "LeftButton")
 assert(#queued == 2 and queued[2].category == "Ammo Vendor" and not wheel.frame:IsShown())
 addon.errands = nil
@@ -384,3 +426,5 @@ InCombatLockdown = function() return true end
 wheel.bindButton.scripts.OnClick(wheel.bindButton)
 assert(not wheel.capture:IsShown())
 print("radial interaction tests passed")
+]]
+dofile('tests/test_wheel_input.lua')

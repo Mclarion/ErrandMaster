@@ -18,7 +18,8 @@ def build(output: Path) -> dict[str, str]:
     assert runtime and runtime[-1] == "Core/Init.lua" and len(runtime) == len(set(runtime))
     images = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "Textures").glob("*.blp"))
     names = ["ErrandMaster.toc", "Bindings.xml", "README.md",
-             "docs/READINESS.md", *runtime, *images]
+             "docs/READINESS.md", "docs/ACCEPTANCE-20261017.md",
+             "docs/RELEASE-v0.6.10-test1.md", *runtime, *images]
     assert len(names) == len(set(names)) and images, "missing images or duplicate entries"
     manifest = {}
     payload = {}

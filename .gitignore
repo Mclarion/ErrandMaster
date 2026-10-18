@@ -2,4 +2,9 @@
 .venv/
 *.zip
 __pycache__/
-tools/
+tools/*
+!tools/render_ring_art.py
+!tools/preview_nested_wheel.py
+!tools/preview_cards.py
+!tools/preview_wheel_runtime.py
+!tools/export_wheel_border_templates.py

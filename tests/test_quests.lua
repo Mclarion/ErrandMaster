@@ -91,3 +91,13 @@ addon.quests:Invalidate()
 local nextRoute, waiting=addon.route:Plan(addon.errands:All(),10,0,0,true,{},addon.quests:OnMap(10))
 assert(#nextRoute==0 and #waiting==2, "vanished waypoint must not retain its stored coordinates")
 print("active quest and physical distance tests passed")
+local freshX=.1
+C_QuestLog={GetQuestsOnMap=function() return {{questID=506,mapID=10,x=freshX,y=.1}} end,
+ GetLogIndexForQuestID=function(id) return id==506 and 6 end,
+ GetInfo=function() return {questID=506,title='Moving objective',isHeader=false} end}
+addon.quests:Invalidate()
+assert(addon.quests:OnMap(10)[1].x==.1)
+freshX=.9
+local fresh=assert(addon.quests:Add(506,10))
+assert(fresh.x==.9,'click-to-add must refresh POIs even before a quest-update event arrives')
+print('quest insertion refreshes cached coordinates')

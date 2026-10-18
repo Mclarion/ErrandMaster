@@ -28,8 +28,9 @@ assert(direct[1].locationID=='npc-near' and math.abs(direct[1].directYards-1)<.0
   tostring(direct[1].locationID)..' '..tostring(direct[1].directYards))
 local withoutEvidence=addon.route:Plan(task,10,.1,.1,true,places,nil,1000,1000,
   {mode='observed',floor=0,playerLevel=30,nodes=nodes,edges=edges})
-assert(#withoutEvidence==0,
-  'missing outdoor elevation must not turn a candidate spawn into a known walk')
+assert(#withoutEvidence==1 and withoutEvidence[1].walkStatus=='unknown-route' and
+  withoutEvidence[1].walkYards==nil and not withoutEvidence[1].walkWaypoints,
+  'missing elevation leaves a located spawn navigable, not a known walk')
 local both,remaining=addon.route:Plan({task[1],
   {id='bank2',name='Second bank errand',category='Bank'},
   {id='bank3',name='Third bank errand',category='Bank'}},

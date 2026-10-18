@@ -73,7 +73,7 @@ assert(ErrandMasterDB.settings.wheelSlots[7].category == "Travel")
 ErrandMasterDB.settings.wheelRadius = 0/0
 ErrandMasterDB.settings.wheelIconSize = 0/0
 addon.db:Initialize("Test-Realm")
-assert(ErrandMasterDB.settings.wheelRadius == 110 and ErrandMasterDB.settings.wheelIconSize == 46)
+assert(ErrandMasterDB.settings.wheelRadius == 100 and ErrandMasterDB.settings.wheelIconSize == 40)
 assert(ErrandMasterDB.settings.wheelScale == 1 and ErrandMasterDB.settings.wheelTheme == "Azure")
 ErrandMasterDB.settings.wheelArtReversed='not-a-boolean'
 addon.db:Initialize('Test-Realm')
@@ -175,6 +175,22 @@ ErrandMasterDB=retained
 addon.db:Initialize("Test-Realm")
 local first = addon.errands:Add({name="Bank", mapID=10, x=0.2, y=0.2, scope="character"})
 local second = addon.errands:Add({name="Mail", mapID=10, x=0.8, y=0.8, scope="account"})
+local floored = addon.errands:Add({name="Upstairs",mapID=10,x=.2,y=.3,floor=2})
+assert(floored.floor==2 and addon.errands:Get(floored.id).floor==2)
+local floorRoute=addon.route:Plan(addon.errands:All(),10,.2,.3,true,nil,nil,100,100)
+local routedFloor
+for _,stop in ipairs(floorRoute) do if stop.id==floored.id then routedFloor=stop.floor end end
+assert(routedFloor==2,'route copies retain saved floor evidence')
+addon.errands:Update(floored.id,{name='Upstairs again'})
+assert(floored.floor==2,'unrelated edits retain floor')
+fails(function() addon.errands:Update(floored.id,{floor=51}) end)
+fails(function() addon.errands:Update(floored.id,{floor=0}) end)
+fails(function() addon.errands:Add({name='Invalid floor',mapID=10,x=.2,y=.3,floor=1.5}) end)
+fails(function() addon.errands:Add({name='Orphan floor',floor=1}) end)
+assert(floored.floor==2)
+addon.errands:Update(floored.id,{clearLocation=true})
+assert(floored.floor==nil,'clearing coordinates also clears their floor')
+addon.errands:Delete(floored.id)
 assert(first.favorite == nil)
 addon.errands:Update(first.id, {favorite=true})
 assert(first.favorite == true)
@@ -224,24 +240,20 @@ local manual = addon.route:Plan(addon.errands:All("Test-Realm"), 10, 0.1, 0.1, f
 assert(manual[1].id == b.id)
 local unavailable = addon.route:Plan(addon.errands:All("Test-Realm"), nil, nil, nil, true)
 assert(#unavailable == 0)
-local added, removed = {}, {}
-TomTom = {
-  AddWaypoint = function(_, map, x, y, opts) local handle = {}; added[#added+1] = {handle, map, x, y, opts}; return handle end,
-  RemoveWaypoint = function(_, handle) removed[#removed+1] = handle end,
-}
-addon.navigation:Next(a)
-addon.navigation:Next(a)
-assert(#added == 1 and #removed == 0)
-assert(added[1][5].source == "ErrandMaster" and added[1][5].persistent == false)
-addon.navigation:Next(b)
-assert(#added == 2 and #removed == 1 and removed[1] == added[1][1])
-TomTom.RemoveWaypoint=function() return false end
-assert(not addon.navigation:Next(a) and #added==2 and
-  addon.navigation.handle==added[2][1],
-  'a failed removal cannot abandon an owned handle or create a duplicate pin')
-TomTom.RemoveWaypoint=function(_, handle) removed[#removed+1] = handle end
-addon.navigation:Next(nil)
-assert(#removed == 2 and removed[2] == added[2][1])
-TomTom = nil
-assert(addon.navigation:Next(a) == false)
+local added, removed = 0, {}
+TomTom = {AddWaypoint=function() added=added+1 end,
+  RemoveWaypoint=function(_, handle) removed[#removed+1]=handle end}
+assert(addon.navigation:Next(a) and addon.navigation.target==a)
+assert(addon.navigation:Next(b) and addon.navigation.target==b and added==0,
+  'native navigation must not create external waypoints or select TomTom arrows')
+addon.navigation.handle='legacy-owned'; addon.navigation.provider=TomTom
+assert(addon.navigation:Next(a) and #removed==1 and removed[1]=='legacy-owned' and
+  addon.navigation.target==a,'only an owned legacy pin is removed')
+TomTom=nil
+assert(addon.navigation:Next(b) and addon.navigation.target==b,
+  'TomTom absence does not disable native navigation')
+addon.db.data.settings.useTomTom=false
+assert(addon.navigation:Next(a) and addon.navigation.target==a)
+TomTom=nil
 print("core tests passed")
+dofile('tests/test_errands_queue_regression.lua')

@@ -1,7 +1,7 @@
 """Convert the user's transparent wheel art to standalone WoW BLP2 icons.
 
-Run after copying newly supplied source PNGs into art/wheel-icons. The composite
-All.png catalog is reference-only and must never become a runtime icon.
+Run after copying newly supplied source PNGs into the matching art/wheel-icons
+folders. The composite All.png catalog is reference-only, never a wheel icon.
 """
 from pathlib import Path
 import struct
@@ -54,6 +54,15 @@ ICONS = {
     "TailoringTrainer": "PackTailoringTrainer",
     "AlchemyVendor": "PackAlchemyVendor",
     "BlacksmithingVendor": "PackBlacksmithingVendor",
+    "ClassTrainer": "PackClassTrainer",
+    "CookingVendor": "PackCookingVendor",
+    "EnchantmentVendor": "PackEnchantmentVendor",
+    "EngineeringVendor": "PackEngineeringVendor",
+    "FirstAidVendor": "PackFirstAidVendor",
+    "FishingVendor": "PackFishingVendor",
+    "LeatherworkingVendor": "PackLeatherworkingVendor",
+    "MiningVendor": "PackMiningVendor",
+    "TailoringVender": "PackTailoringVendor",
 }
 CLASS_ICONS = {
     name: "Class" + ("Rogue" if name == "Rouge" else name)
@@ -62,10 +71,24 @@ CLASS_ICONS = {
                  "Warlock", "Warrior")
 }
 SIZE = 256
+TRAINERS = {name for name in ICONS if name.endswith("Trainer") or name == "LeatherworkingTraner"}
+VENDORS = {name for name in ICONS if name.endswith("Vendor") or name == "TailoringVender"}
+UI_ELEMENTS = {"Back", "Cross", "PadlockLocked", "PadlockUnlocked", "Settings"}
+
+def source_path(name: str) -> Path:
+    if name in TRAINERS:
+        folder = "Profession Trainers"
+    elif name in VENDORS:
+        folder = "Profession Vendors"
+    elif name in UI_ELEMENTS:
+        folder = "UI Elements"
+    else:
+        folder = ""
+    return SOURCE / folder / f"{name}.png"
 
 
 def blp(rgba: Image.Image) -> bytes:
-    raw = rgba.tobytes()
+    raw = rgba.tobytes("raw", "BGRA")
     header = struct.pack("<4sI4BII", b"BLP2", 1, 3, 8, 8, 0, SIZE, SIZE)
     header += struct.pack("<16I", 1172, *([0] * 15))
     header += struct.pack("<16I", len(raw), *([0] * 15)) + bytes(1024)
@@ -95,12 +118,12 @@ def soft_asset(data: bytes) -> bytes:
         struct.unpack_from("<4sI4BII", data))
     if (magic, kind, compression, alpha, alpha_kind, mipmaps) != (
             b"BLP2", 1, 3, 8, 8, 0) or width not in (128, 256) or height != width:
-        raise ValueError("expected an uncompressed RGBA wheel icon")
+        raise ValueError("expected an uncompressed BGRA wheel icon")
     offset = struct.unpack_from("<I", data, 20)[0]
     length = struct.unpack_from("<I", data, 84)[0]
     if offset != 1172 or length != width * height * 4 or len(data) != offset + length:
         raise ValueError("invalid BLP pixel payload")
-    image = Image.frombytes("RGBA", (width, height), data[offset:])
+    image = Image.frombytes("RGBA", (width, height), data[offset:], "raw", "BGRA")
     image = image.filter(ImageFilter.GaussianBlur(width * .075))
     return blp(image.resize((SIZE, SIZE), Image.Resampling.LANCZOS))
 
@@ -127,14 +150,14 @@ def logo(path: Path) -> bytes:
 
 if __name__ == "__main__":
     for source, target in ICONS.items():
-        data = asset(SOURCE / f"{source}.png")
+        data = asset(source_path(source))
         (TARGET / f"{target}.blp").write_bytes(data)
         (TARGET / f"Soft{target}.blp").write_bytes(soft_asset(data))
     for source, target in CLASS_ICONS.items():
         data = asset(ROOT / "art" / "class-trainers" / f"{source}.png")
         (TARGET / f"{target}.blp").write_bytes(data)
         (TARGET / f"Soft{target}.blp").write_bytes(soft_asset(data))
-    data = logo(SOURCE / "All.png")
+    data = logo(SOURCE / "Concept" / "All.png")
     (TARGET / "PackLogo.blp").write_bytes(data)
     (TARGET / "SoftPackLogo.blp").write_bytes(soft_asset(data))
     for path in TARGET.glob("Service*.blp"):

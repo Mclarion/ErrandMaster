@@ -58,28 +58,36 @@ assert(not addon.db.data)
 UnitFullName = function() return "Test", "Realm" end
 eventFrame.scripts.OnEvent(eventFrame, "PLAYER_LOGIN")
 assert(addon.db.data and SlashCmdList.ERRANDMASTER and SLASH_ERRANDMASTER1 == "/em", messages[#messages])
-assert(addon.destinations.frame and addon.destinations.frame:IsShown(),
-  'the separate right-side targets panel is visible on first login')
+assert(addon.destinations.frame and not addon.destinations.frame:IsShown(),
+  'empty target sidebar stays hidden on first login')
 assert(addon.ui.targetsButton and addon.ui.targetsButton.scripts.OnClick,
   'the main window exposes a Targets control')
 addon.ui.targetsButton.scripts.OnClick(addon.ui.targetsButton)
-assert(not addon.destinations.frame:IsShown() and
-  addon.db.data.settings.showDestinations==false)
+assert(not addon.destinations.frame:IsShown(),
+  'targets button cannot reveal an empty sidebar')
 addon.ui.targetsButton.scripts.OnClick(addon.ui.targetsButton)
-assert(addon.destinations.frame:IsShown() and
-  addon.db.data.settings.showDestinations==true)
+assert(not addon.destinations.frame:IsShown() and
+  addon.db.data.settings.showDestinations==true,
+  'an enabled but empty sidebar remains hidden')
 GetProfessions=function() return 1,2 end
 GetProfessionInfo=function(index) return index==1 and 'Mining' or 'Alchemy' end
-local automatic,source=addon:ProfessionFilters()
-assert(source=='auto' and #automatic==2 and automatic[1]=='Mining')
-assert(addon.db:AddProfession('Fishing'))
-local manual,manualSource=addon:ProfessionFilters()
-assert(manualSource=='manual' and #manual==1 and manual[1]=='Fishing',
-  'explicit character preference overrides optional client profession detection')
-addon.db:ClearProfessions()
+local configured,source=addon:ProfessionFilters()
+assert(source=='configured' and #configured==12 and configured[1]=='Alchemy' and
+  configured[#configured]=='First Aid','unset primary picks include all primaries and common trades')
+assert(addon.db:SetProfessionPick(1,'Mining') and addon.db:SetProfessionPick(2,'Alchemy'))
+local chosen,chosenSource=addon:ProfessionFilters()
+assert(chosenSource=='configured' and #chosen==5 and chosen[1]=='Mining' and
+  chosen[2]=='Alchemy','two saved picks override all-primary default')
+assert(addon.db:SetCommonProfession('Fishing',false))
+local excluded=addon:ProfessionFilters()
+assert(#excluded==4 and excluded[3]=='Cooking' and excluded[4]=='First Aid',
+  'saved common-profession opt-out reaches route filtering')
+assert(addon.db:SetCommonProfession('Fishing',true))
+assert(addon.db:SetProfessionPick(1,nil) and addon.db:SetProfessionPick(2,nil))
 GetProfessions=nil; GetProfessionInfo=nil
-local unavailable,unavailableSource=addon:ProfessionFilters()
-assert(unavailableSource=='unavailable' and #unavailable==0)
+local allDefault,defaultSource=addon:ProfessionFilters()
+assert(defaultSource=='configured' and #allDefault==12,
+  'missing native profession API does not suppress configured dropdown defaults')
 assert(addon.npcs.state=='indexing', 'provider loaded before ErrandMaster starts')
 assert(addon.minimap and addon.minimap.Attach and addon.destinations and
   addon.destinations.Toggle, 'the boot harness loads every TOC module')
@@ -91,12 +99,29 @@ mouseY = 650
 addon.radial.frame.scripts.OnUpdate(addon.radial.frame)
 addon.radial.frame.scripts.OnMouseDown(addon.radial.frame, "LeftButton")
 assert(addon.radial.submenu == "Bank")
-mouseX, mouseY = addon.radial.centerX, addon.radial.centerY + addon.radial.radius
+local bankTier=addon.radial.tiers[#addon.radial.tiers]
+mouseX, mouseY = addon.radial.centerX + bankTier.radius*math.cos(bankTier.angles[1]),
+  addon.radial.centerY + bankTier.radius*math.sin(bankTier.angles[1])
 addon.radial.frame.scripts.OnUpdate(addon.radial.frame)
 addon.radial.frame.scripts.OnMouseDown(addon.radial.frame, "LeftButton")
 assert(#addon.errands:All() == 1 and addon.errands:All()[1].category == "Bank")
 assert(addon.errands:All()[1].origin == "suggested")
 addon.errands:Delete(addon.errands:All()[1].id)
+local oldWheelOpen=addon.radial.Open
+local oldWheelShown=addon.radial.frame.IsShown
+addon.radial.frame.IsShown=function() return true end
+addon.radial.Open=function() return false end
+local beforeWheelMessages=#messages
+SlashCmdList.ERRANDMASTER('wheel')
+assert(#messages==beforeWheelMessages,
+  'closing an already shown wheel is not an unavailable error')
+addon.radial.frame.IsShown=function() return false end
+SlashCmdList.ERRANDMASTER('wheel')
+assert(#messages==beforeWheelMessages+1 and
+  messages[#messages]:find('Wheel unavailable',1,true),
+  'a failed open from a hidden wheel still reports unavailability')
+addon.radial.Open=oldWheelOpen
+addon.radial.frame.IsShown=oldWheelShown
 SlashCmdList.ERRANDMASTER("wheel settings")
 assert(addon.addonSettings.frame:IsShown() and addon.addonSettings.bind,
   'wheel settings opens compact AddOns settings, not the old studio')
@@ -189,10 +214,10 @@ addon.Refresh=function(self)
 end
 assert(type(addon.MovementTick)=='function', 'movement must trigger route refresh without trail consent or an active waypoint')
 assert(not addon:MovementTick())
-liveX=.24
-assert(not addon:MovementTick() and movedRefreshes==0, '40 yards does not trigger replanning')
-liveX=.251
-assert(addon:MovementTick() and movedRefreshes==1, '51 yards triggers a route refresh')
+liveX=.209
+assert(not addon:MovementTick() and movedRefreshes==0, 'nine yards does not trigger replanning')
+liveX=.211
+assert(addon:MovementTick() and movedRefreshes==1, 'eleven yards triggers a route refresh')
 local onTaxi=true
 UnitOnTaxi=function() return onTaxi end
 liveX=.4
@@ -207,11 +232,63 @@ assert(not addon:MovementTick() and movedRefreshes==2,
   'landing waits for a valid post-flight location rather than using stale coordinates')
 C_Map.GetPlayerMapPosition=function() return {GetXY=function() return .4,.3 end} end
 assert(addon:MovementTick() and movedRefreshes==3,
-  'a valid post-flight sample replans once without a 50-yard requirement')
+  'a valid post-flight sample replans once without a 10-yard requirement')
 assert(not addon:MovementTick() and movedRefreshes==3)
 addon.Refresh=normalRefresh
 C_Map.GetPlayerMapPosition=function() return {GetXY=function() return .2,.3 end} end
 UnitOnTaxi=nil
+addon.movementOrigin={map=10,x=.2,y=.3}
+-- Riding changes the nearest service, but does not rewrite the queued errand.
+local auction=addon.errands:Add({name='Find auction house',category='Auction House',
+  origin='suggested',scope='character'})
+local oldAll, oldLocations, oldNpcsReady, oldNpcsLocations=addon.errands.All,
+  addon.locations.All,addon.npcs.IsReady,addon.npcs.LocationsOnMap
+local oldMode=addon.db.data.settings.routeMode
+local oldMapServices=addon.npcs.mapServices
+addon.npcs.mapServices={[10]={['Auction House']=true}}
+addon.db.data.settings.routeMode='direct'
+addon.errands.All=function() return {auction} end
+addon.locations.All=function() return {} end
+addon.npcs.IsReady=function() return true end
+addon.npcs.LocationsOnMap=function(_,map)
+  if map~=10 then return {} end
+  return {{id='west-ah',name='West Auctioneer',category='Auction House',
+    mapID=10,x=.25,y=.3},
+    {id='east-ah',name='East Auctioneer',category='Auction House',
+    mapID=10,x=.85,y=.3}}
+end
+local positions={.2,.8,.2,.8}
+local candidateIds={}
+C_Map.GetPlayerMapPosition=function() return {GetXY=function() return positions[1],.3 end} end
+UnitIsMounted=function() return true end
+addon.Refresh=function(self)
+  local stops=self:Plan()
+  candidateIds[#candidateIds+1]=stops[1] and stops[1].locationID
+end
+assert(addon:Plan()[1].locationID=='west-ah')
+table.remove(positions,1)
+assert(addon:MovementTick() and candidateIds[1]=='east-ah',
+  'mounted movement beyond 50 yards switches current-map nearest auction candidate')
+table.remove(positions,1)
+assert(addon:MovementTick() and candidateIds[2]=='west-ah' and
+  addon.errands:Get(auction.id)==auction,
+  'returning switches back without replacing the queued auction errand')
+local ridingTaxi=true
+UnitOnTaxi=function() return ridingTaxi end
+table.remove(positions,1)
+assert(not addon:MovementTick() and #candidateIds==2,
+  'taxi travel never selects a riding candidate in mid-flight')
+ridingTaxi=false
+assert(addon:MovementTick() and candidateIds[3]=='east-ah',
+  'landing recomputes nearest auction candidate without a 50-yard sample')
+addon.Refresh=normalRefresh
+addon.errands.All,addon.locations.All=oldAll,oldLocations
+addon.npcs.IsReady,addon.npcs.LocationsOnMap=oldNpcsReady,oldNpcsLocations
+addon.npcs.mapServices=oldMapServices
+addon.db.data.settings.routeMode=oldMode
+addon.errands:Delete(auction.id)
+UnitIsMounted=nil; UnitOnTaxi=nil
+C_Map.GetPlayerMapPosition=function() return {GetXY=function() return .2,.3 end} end
 addon.movementOrigin={map=10,x=.2,y=.3}
 C_QuestLog = {
   GetQuestsOnMap=function(id) return id == 10 and {{questID=501, mapID=10, x=.4, y=.5}} or {} end,
@@ -242,8 +319,9 @@ SlashCmdList.ERRANDMASTER("walking on")
 SlashCmdList.ERRANDMASTER("walking status")
 assert(messages[#messages]:find("Observed-walk routing",1,true))
 local noRoute, unknown = addon:Plan()
-assert(#noRoute == 0 and #unknown == 3 and unknown[1].walkStatus == "unknown-route",
-  "missing walk evidence must not silently fall back to a direct route")
+assert(#noRoute == 3 and #unknown == 0 and noRoute[1].walkStatus == 'unknown-route' and
+  noRoute[1].walkYards == nil and noRoute[1].walkWaypoints == nil,
+  'missing walk evidence exposes local coordinates without inventing a walk')
 local removed=0
 addon.navigation.provider={RemoveWaypoint=function(_, handle)
   assert(handle=="old-em"); removed=removed+1 end}
@@ -267,6 +345,9 @@ addon.Plan=originalPlan
 eventFrame.scripts.OnUpdate(eventFrame,.1) -- Finish indexing before timing navigation.
 assert(addon.npcs:IsReady() and #addon.npcs:LocationsOnMap(10,'Bank')==1)
 local baseNearby=addon.zoneSearch.Nearby
+-- Exercise legacy hint fallback separately from the integrated sequence tests.
+local baseRouteContext=addon.zoneSearch.RouteContext
+addon.zoneSearch.RouteContext=nil
 addon.zoneSearch.Nearby=function(_,map,x,y,wanted)
   assert(map==10 and x==.2 and y==.3 and wanted=='Bank')
   return {{name='Border Banker',category='Bank',mapID=20,zoneName='Border',
@@ -280,8 +361,39 @@ assert(borderDeferred[1].nearbyZoneCandidate and
   'unrouted nearby zone candidate remains deferred')
 addon.destinations:Refresh()
 assert(addon.destinations.lines[1]:find('Border',1,true) and
-  addon.destinations.lines[1]:find('direct',1,true),
-  'the target panel labels an unknown border route as a direct-distance hint')
+  addon.destinations.lines[1]:find('yd - Border - Unknown Path',1,true),
+  'a nearby-zone direct estimate must remain explicitly an unknown path')
+addon.route.Plan=baseRoute
+addon.zoneSearch.Nearby=baseNearby
+addon.zoneSearch.Nearby=function(_,map,x,y,wanted,radius,limit)
+  assert(map==10 and wanted=='Auction House' and radius==10000 and limit==1)
+  return {{name='Projected Auctioneer',category='Auction House',mapID=20,
+    zoneName='Border',x=.1,y=.5,directYards=3300}}
+end
+addon.route.Plan=function() return {},{{id='auction-deferred',name='Find auction',
+  category='Auction House'}} end
+local _,auctionDeferred=addon:Plan()
+assert(auctionDeferred[1].nearbyZoneCandidate and
+  auctionDeferred[1].nearbyZoneCandidate.directYards==3300 and
+  not auctionDeferred[1].mapID,
+  'projected cross-zone auction spawn is a direct hint, not an invented waypoint')
+local pendingAuction=addon.errands:Add({name='Pending auction',category='Auction House',
+  origin='suggested',scope='character'})
+local heldPlan=addon.Plan
+addon.Plan=function() return {},{{id=pendingAuction.id,name=pendingAuction.name,
+  category='Auction House',nearbyZoneCandidate=auctionDeferred[1].nearbyZoneCandidate}} end
+addon.db.data.characters[addon.db.character].activeErrandId=pendingAuction.id
+local savedPrint=addon.Print
+local auctionMessages={}
+addon.Print=function(_,text) auctionMessages[#auctionMessages+1]=text end
+addon:NavigateNext()
+assert(table.concat(auctionMessages,' '):find('3300 yd straight-line',1,true) and
+  table.concat(auctionMessages,' '):find('route unknown',1,true) and
+  not addon.navigation.handle,
+  'explicit next reports the projected auction hint without a cross-zone arrow or walking claim')
+addon.Print=savedPrint; addon.Plan=heldPlan
+addon.db.data.characters[addon.db.character].activeErrandId=nil
+addon.errands:Delete(pendingAuction.id)
 addon.route.Plan=baseRoute
 addon.zoneSearch.Nearby=baseNearby
 C_Map.GetMapInfo=function(id) return {name=id==20 and 'Ironforge' or 'Test Zone'} end
@@ -298,15 +410,17 @@ assert(flightDeferred[1].taxiFlightNode=='Ironforge',
 addon.destinations:Refresh()
 assert(addon.destinations.lines[1]:find('Ironforge',1,true) and
   addon.destinations.lines[1]:find('Shaman trainer',1,true) and
-  addon.destinations.lines[1]:find('walk unknown',1,true),
+  addon.destinations.lines[1]:find('Walk Unknown',1,true),
   'the panel retains the requested trainer and keeps the post-flight walk unverified')
 eventFrame.scripts.OnEvent(eventFrame,'TAXIMAP_CLOSED')
 assert(not addon.taxiAdvice:ForMap(20))
 addon.route.Plan=baseRoute
+addon.zoneSearch.RouteContext=baseRouteContext
 NumTaxiNodes=nil; TaxiNodeGetType=nil; TaxiNodeName=nil
 C_Map.GetMapInfo=nil
-assert(addon.ui.npcButton and addon.ui.npcStatus.text=='NPC catalog: ready',
-  'main window shows the provider index state and a catalog entry point')
+assert(addon.ui.npcButton and addon.npcs:IsReady() and addon.npcs:Status().limited and
+  addon.ui.npcStatus.text=='NPC catalog: incomplete',
+  'NPC-only fixture is usable but exposes missing inventory coverage and a catalog entry point')
 addon.navigation.provider={RemoveWaypoint=function(_, handle)
   assert(handle=="moving-em"); removed=removed+1 end}
 addon.navigation.handle="moving-em"
@@ -332,7 +446,7 @@ assert(addon.navigation.handle=='retry-em' and
 addon.navigation.provider={RemoveWaypoint=function() removed=removed+1 end}
 assert(addon.navigation:Clear() and removed==5)
 addon.Plan=originalPlan
--- Active targets follow an owned TomTom arrow; unknown walking stays explicit.
+-- Active targets use an owned native indicator; TomTom remains untouched.
 local selected=addon.errands:Add({name='Bank interaction',category='Bank',
   mapID=10,x=.2,y=.3,origin='suggested',scope='character'})
 local originalRefresh, originalMapSize = addon.Refresh, C_Map.GetMapWorldSize
@@ -351,17 +465,18 @@ addon.Refresh=function(self) self:RevalidateNavigation() end
 assert(addon.navigation.paused, 'Clear pin must remain cleared across refreshes')
 addon:RevalidateNavigation()
 assert(added==0 and addon.navigation.handle==nil)
-assert(addon:ActivateTarget(selected.id) and added==1 and
-  title:find('walking path unverified',1,true) and
-  addon.navigation.handle=='active-target', 'activation resumes a direct, labeled arrow')
+assert(addon:ActivateTarget(selected.id) and added==0 and
+  addon.navigation.target.id==selected.id and addon.navigation.handle==nil,
+  'activation resumes native navigation without creating TomTom pins')
 addon:RevalidateNavigation()
-assert(added==1, 'periodic refresh does not duplicate the owned waypoint')
+assert(added==0, 'periodic refresh leaves external waypoints alone')
 assert(not addon:FinishTargetOnInteraction('MAIL_SHOW') and not selected.completed)
 C_Map.GetMapWorldSize=function() return 1000,1000 end
-assert(addon:FinishTargetOnInteraction('BANKFRAME_OPENED') and selected.completed)
-assert(addon.db.data.characters[addon.db.character].activeErrandId==nil and
-  cleared==1 and addon.navigation.handle==nil,
-  'interacting at the matched bank marks it done and advances the arrow')
+assert(not addon:FinishTargetOnInteraction('BANKFRAME_OPENED') and not selected.completed,
+  'generic nearby service UI never completes or removes a queue target')
+assert(addon.db.data.characters[addon.db.character].activeErrandId==selected.id and
+  cleared==0 and addon.navigation.handle==nil,
+  'service UI does not advance the queue')
 addon.errands:Delete(selected.id) -- Keep the original NPC and pin fixture counts unchanged.
 local probe=addon.errands:Add({name='No TomTom available', category='Bank',
   mapID=10, x=.2, y=.3, scope='character'})
@@ -375,6 +490,28 @@ addon:NavigateNext()
 assert(not table.concat(notices,' '):find('TomTom points directly',1,true),
   'missing TomTom must not be described as an active arrow')
 addon.navigation.Next, addon.Print=previousNext, previousPrint
+TomTom=nil
+notices={}
+addon.Print=function(_, text) notices[#notices+1]=text end
+addon:NavigateNext()
+assert(table.concat(notices,' '):find('Native direct-bearing',1,true),
+  'native navigation does not depend on TomTom being present')
+TomTom={profile={arrow={enable=false}},
+  AddWaypoint=function() return 'hidden-arrow' end,
+  RemoveWaypoint=function() return true end}
+notices={}
+addon:NavigateNext()
+assert(table.concat(notices,' '):find('Native direct-bearing',1,true),
+  'external arrow profile does not disable the native indicator')
+addon.navigation:Clear()
+addon.db.data.settings.useTomTom=false
+notices={}
+addon:NavigateNext()
+assert(table.concat(notices,' '):find('Native direct-bearing',1,true),
+  'legacy TomTom setting does not disable native navigation')
+addon.db.data.settings.useTomTom=true
+addon.Print=previousPrint
+TomTom=oldTomTom
 addon.errands:Delete(probe.id)
 local unlocated=addon.errands:Add({name='Unlocated bank', category='Bank',
   origin='suggested', scope='character'})
@@ -398,8 +535,8 @@ UnitGUID=function() return nil end
 assert(not addon:FinishTargetOnInteraction('BANKFRAME_OPENED') and
   not resolved.completed, 'missing NPC identity cannot be replaced by map proximity')
 UnitGUID=function() return 'Creature-0-0-0-0-501-00000001' end
-assert(addon:FinishTargetOnInteraction('BANKFRAME_OPENED') and resolved.completed,
-  'matching service interaction and resolved NPC identity complete the target')
+assert(not addon:FinishTargetOnInteraction('BANKFRAME_OPENED') and not resolved.completed,
+  'even exact NPC service identity is not a Done action under remove-on-arrival')
 UnitGUID=oldUnitGUID
 addon.errands:Delete(resolved.id)
 addon.db.data.characters[addon.db.character].activeErrandId=nil
@@ -422,8 +559,8 @@ assert(addon:ActivateTarget(visit.id))
 assert(not addon:FinishTargetOnInteraction('GOSSIP_SHOW') and not visit.completed,
   'an NPC visit still requires the correct NPC identity')
 UnitGUID=function() return 'Creature-0-0-0-0-501-00000001' end
-assert(addon:FinishTargetOnInteraction('GOSSIP_SHOW') and visit.completed,
-  'explicit NPC Visit completes when speaking to the matched NPC')
+assert(not addon:FinishTargetOnInteraction('GOSSIP_SHOW') and not visit.completed,
+  'speaking to a matched NPC is not proof of queue arrival or completion')
 UnitGUID=oldUnitGUID
 addon.errands:Delete(visit.id)
 addon.Plan=originalPlan; addon.Refresh=originalRefresh
@@ -478,6 +615,18 @@ assert(#trailBucket.nodes==1 and #trailBucket.edges==1,
 SlashCmdList.ERRANDMASTER("trails confirm")
 assert(#trailBucket.nodes==0 and #trailBucket.edges==0 and not addon.trails:IsEnabled(),
   'confirmation clears only bound character evidence and stops recording')
+local priorRevalidate=addon.RevalidateNavigation
+local rechecks=0
+addon.navigation.target={id='active',mapID=10,x=.3,y=.3}
+addon.RevalidateNavigation=function() rechecks=rechecks+1 end
+eventFrame.scripts.OnUpdate(eventFrame,1)
+assert(rechecks==0,'native navigation replanning is bounded, not every frame')
+eventFrame.scripts.OnUpdate(eventFrame,1.1)
+assert(rechecks==1,'active native target ticks with recording disabled')
+eventFrame.scripts.OnUpdate(eventFrame,.1)
+assert(rechecks==1,'no repeated graph rebuild before the next tick')
+addon.navigation.target=nil
+addon.RevalidateNavigation=priorRevalidate
 SlashCmdList.ERRANDMASTER("trails confirm")
 assert(not addon.trails:IsEnabled(), 'confirmation cannot be reused')
 trailBucket.nodes[1]={id='saved'}
@@ -508,4 +657,32 @@ C_Map = {GetBestMapForUnit=function() return 10 end,
   GetPlayerMapPosition=function() return protectedVector end}
 assert(addon:Position() == 10 and touched == 0,
   "reject protected position before member access")
+local originalDiagnostics=addon.npcs.Diagnostics
+addon.npcs.Diagnostics=function(_,map,service)
+ assert(map==10 and service=='Food Vendor')
+ return {state='ready',candidates=0,factionExcluded=2,inventoryEvidence='not-evidenced',
+   issues={['item-class']=3},mapLimited=true,mapIssues={['invalid-coordinate']=2}}
+end
+local beforeDiagnostics=#messages
+SlashCmdList.ERRANDMASTER('npcs explain Food Vendor')
+local diagnosticOutput=table.concat(messages,'\n',beforeDiagnostics+1)
+assert(diagnosticOutput:find('not%-evidenced') and diagnosticOutput:find('item%-class=3'),
+ 'NPC explanation must expose absent evidence and bounded failure counters')
+assert(diagnosticOutput:find('Map issues: invalid%-coordinate=2'),
+ 'explanation must distinguish map-specific reasons from global failures')
+addon.npcs.Diagnostics=originalDiagnostics
+local originalStatus=addon.npcs.Status
+addon.npcs.Status=function() return {state='indexing',normalizing=true,normalizedEntries=80,processed=0,total=0} end
+local beforeNormalization=#messages
+SlashCmdList.ERRANDMASTER('npcs status')
+assert(table.concat(messages,'\n',beforeNormalization+1):find('normalizing provider IDs'),
+ 'status must distinguish unfinished ID totals from an empty catalog')
+addon.npcs.Status=originalStatus
+addon.discovery.lastReport={saved={Vendor=true},partial=true,failures={['Food Vendor']='not-saved'}}
+local beforeDiscovery=#messages
+SlashCmdList.ERRANDMASTER('discover status')
+local discoveryOutput=table.concat(messages,'\n',beforeDiscovery+1)
+assert(discoveryOutput:find('Food Vendor=not%-saved') and discoveryOutput:find('Vendor'),
+ 'discovery status exposes partial saved observations')
 print("boot mock passed")
+dofile('tests/test_init_queue_regression.lua')

@@ -13,8 +13,45 @@ local function copy(item)
   for key, value in pairs(item) do result[key] = value end
   return result
 end
+-- Overlay manual ranks across both tuple groups without changing their meaning.
+function route:DisplayOrder(ordered, deferred)
+  local all, anchors, free = {}, {}, {}
+  for _, group in ipairs({ordered or {}, deferred or {}}) do
+    for _, item in ipairs(group) do all[#all+1] = item end
+  end
+  local sequential=#all>0
+  for _,item in ipairs(all) do
+    if type(item.sequenceRank)~='number' then sequential=false; break end
+  end
+  if sequential then
+    table.sort(all,function(a,b) return a.sequenceRank<b.sequenceRank end)
+    return all
+  end
+  for _, item in ipairs(all) do
+    local rank = item.manualPosition
+    if type(rank) == 'number' and rank == rank and rank % 1 == 0 and rank >= 1 then
+      anchors[#anchors+1] = item
+    else free[#free+1] = item end
+  end
+  table.sort(anchors, function(a,b)
+    if a.manualPosition == b.manualPosition then return tostring(a.id) < tostring(b.id) end
+    return a.manualPosition < b.manualPosition
+  end)
+  local result = {}
+  for _, item in ipairs(anchors) do
+    local slot = math.min(item.manualPosition, #all)
+    while result[slot] and slot < #all do slot = slot + 1 end
+    if result[slot] then slot=1; while result[slot] do slot=slot+1 end end
+    result[slot] = item
+  end
+  local nextFree = 1
+  for i=1,#all do
+    if not result[i] then result[i],nextFree=free[nextFree],nextFree+1 end
+  end
+  return result
+end
 local function usePlace(item, place)
-  item.mapID, item.x, item.y = place.mapID, place.x, place.y
+  item.mapID, item.x, item.y, item.floor = place.mapID, place.x, place.y, place.floor
   item.locationID, item.locationSource = place.id, place.source
   item.approximate = place.precision == "approximate"
   item.npcID, item.phaseUnverified = place.npcID, place.phaseUnverified
@@ -44,7 +81,7 @@ function route:Plan(errands, mapID, x, y, optimize, locations, questPOIs, width,
         local poi = questByID[item.questID]
         if poi then
           local resolved = copy(item)
-          resolved.mapID, resolved.x, resolved.y = poi.mapID, poi.x, poi.y
+          resolved.mapID, resolved.x, resolved.y, resolved.floor = poi.mapID, poi.x, poi.y, poi.floor
           resolved.questLocationSource = poi.source
           resolved.projectedWaypoint = poi.projected == true
           eligible[#eligible+1] = resolved
@@ -105,11 +142,34 @@ function route:Plan(errands, mapID, x, y, optimize, locations, questPOIs, width,
       end
     end
   end
+  -- Manual positions reserve only their own slots; the other stops remain
+  -- optimizable. Filtered maps can leave gaps, which we clamp locally.
+  local anchors, reserved, anchored = {}, {}, {}
+  for _, item in ipairs(eligible) do
+    if type(item.manualPosition) == 'number' and item.manualPosition == item.manualPosition and
+        item.manualPosition % 1 == 0 and item.manualPosition >= 1 then
+      anchored[#anchored+1] = item
+    end
+  end
+  table.sort(anchored, function(a,b)
+    if a.manualPosition == b.manualPosition then return tostring(a.id) < tostring(b.id) end
+    return a.manualPosition < b.manualPosition
+  end)
+  for _, item in ipairs(anchored) do
+    local slot = math.min(item.manualPosition, #eligible)
+    while reserved[slot] and slot < #eligible do slot = slot + 1 end
+    if reserved[slot] then
+      slot = 1
+      while reserved[slot] do slot = slot + 1 end
+    end
+    reserved[slot], anchors[item] = item, slot
+  end
   if walkContext and walkContext.mode == "observed" then
     local cx, cy = x, y
     local floor = walkContext.floor or 0
     local originWorld, originZ = walkContext.worldMapID, walkContext.wz
     local cumulative = 0
+    local evidenceLost = false
     local built = addon.walkGraph and addon.walkGraph:Build(walkContext.nodes,
       walkContext.edges,walkContext.playerLevel)
     while #eligible > 0 do
@@ -121,49 +181,61 @@ function route:Plan(errands, mapID, x, y, optimize, locations, questPOIs, width,
         local assessed = {}
         for i, item in ipairs(eligible) do
           for _, place in ipairs(item.locationCandidates or {item}) do
-            local known = place.id and assessed[place.id]
+            local known = not evidenceLost and place.id and assessed[place.id]
             local to, path
             if known then to, path = known.to, known.path
             else
               to = {uiMapID=place.mapID,floor=place.floor or floor,x=place.x,y=place.y,
                 worldMapID=place.worldMapID,wz=place.wz}
-              path = addon.walkGraph:Assess(prepared,to)
+              path = evidenceLost and {status='unknown-route'} or
+                addon.walkGraph:Assess(prepared,to)
               if place.id then assessed[place.id] = {to=to,path=path} end
             end
-            local priority = path.status == "known-route" and 0 or 1
-            local eligiblePath = path.status == "known-route" or
-              (path.status == "partial-route" and path.hasSegment)
-            local better = eligiblePath and (not best or (not optimize and
+            local priority = path.status == 'known-route' and 0 or
+              (path.status == 'partial-route' and path.hasSegment) and 1 or 2
+            local cost = priority == 2 and
+              (place.mapID == mapID and type(place.x)=='number' and type(place.y)=='number' and
+                distance(cx,cy,place.x,place.y,dx,dy) or math.huge) or path.weightedCost
+            local required = reserved[#output+1]
+            local allowed = required and item == required or not required and not anchors[item]
+            local better = allowed and (not best or (not optimize and
               (i < best or (i == best and (priority < bestPriority or
-                (priority == bestPriority and path.weightedCost < score))))) or
+                (priority == bestPriority and cost < score))))) or
               (optimize and (priority < bestPriority or
-                (priority == bestPriority and path.weightedCost < score))))
+                (priority == bestPriority and cost < score))))
             if better then
               best, score, bestPath, bestPriority, bestTo, bestPlace =
-                i, path.weightedCost, path, priority, to,
+                i, cost, path, priority, to,
                 item.locationCandidates and place or nil
             end
           end
         end
       end
       if not best then
+        -- Coordinates unavailable; do not fabricate a walking leg.
         for _, item in ipairs(eligible) do
-          item.walkStatus = "unknown-route"
-          deferred[#deferred+1] = item
+          if item.locationCandidates then
+            usePlace(item,item.locationCandidates[1]); item.locationCandidates=nil
+          end
+          item.walkStatus='unknown-route'
+          output[#output+1]=item
         end
         break
-      end
+      else
       local selected = table.remove(eligible,best)
       if bestPlace then usePlace(selected,bestPlace); selected.locationCandidates=nil end
-      bestPath = addon.walkGraph:FromPrepared(prepared, bestTo)
+      bestPath = evidenceLost and {status='unknown-route'} or
+        addon.walkGraph:FromPrepared(prepared, bestTo)
       selected.walkStatus = bestPath.status
       selected.walkYards = bestPath.yards
-      selected.walkWaypoints = bestPath.waypoints
+      selected.walkWaypoints = bestPath.status ~= 'unknown-route' and bestPath.waypoints or nil
       selected.walkWarning = bestPath.warning
       selected.unknownStart = bestPath.unknownStart
       selected.unknownEnd = bestPath.unknownEnd
-      cumulative = cumulative + bestPath.yards
-      selected.cumulativeWalkYards = cumulative
+      if bestPath.yards then
+        cumulative = cumulative + bestPath.yards
+        selected.cumulativeWalkYards = cumulative
+      end
       output[#output+1] = selected
       -- One catalog candidate can satisfy several errands at the same stop.
       -- Keep every errand, but do not plan an extra leg from an uncertain end.
@@ -173,7 +245,7 @@ function route:Plan(errands, mapID, x, y, optimize, locations, questPOIs, width,
           local item = eligible[j]
           local shared=false
           for _, candidate in ipairs(item.locationCandidates or {}) do
-            if candidate == bestPlace then
+            if candidate == bestPlace and not anchors[item] then
               usePlace(item,bestPlace)
               item.locationCandidates = nil
               item.walkStatus, item.walkYards = bestPath.status, 0
@@ -190,23 +262,24 @@ function route:Plan(errands, mapID, x, y, optimize, locations, questPOIs, width,
         end
       end
       cx, cy, floor = selected.x, selected.y, selected.floor or floor
-      local lastNode = bestPath.waypoints[#bestPath.waypoints]
-      originWorld, originZ = lastNode.worldMapID, lastNode.wz
-      if bestPath.status == "partial-route" then
-        for _, item in ipairs(eligible) do
-          item.walkStatus = "unknown-route"
-          deferred[#deferred+1] = item
-        end
-        break -- The unobserved endpoint cannot become the next verified origin.
+      if bestPath.status == 'known-route' then
+        local lastNode = bestPath.waypoints[#bestPath.waypoints]
+        originWorld, originZ = lastNode.worldMapID, lastNode.wz
+      else
+        evidenceLost = true -- An unobserved endpoint cannot become a verified origin.
+      end
       end
     end
   elseif optimize and canLocate then
     local cx, cy = x, y
     while #eligible > 0 do
       local best, score = 1, math.huge
+      local required = reserved[#output+1]
       for i, item in ipairs(eligible) do
-        local current = distance(cx, cy, item.x, item.y, dx, dy)
-        if current < score then best, score = i, current end
+        if (required and item == required) or (not required and not anchors[item]) then
+          local current = distance(cx, cy, item.x, item.y, dx, dy)
+          if current < score then best, score = i, current end
+        end
       end
       local selected = table.remove(eligible, best)
       output[#output+1] = selected
@@ -223,4 +296,138 @@ function route:Plan(errands, mapID, x, y, optimize, locations, questPOIs, width,
     end
   end
   return output, deferred
+end
+
+local function located(point)
+  return point and type(point.mapID)=='number' and point.mapID>=1 and
+    type(point.x)=='number' and type(point.y)=='number' and
+    point.x>=0 and point.x<=1 and point.y>=0 and point.y<=1
+end
+function route:Matches(item,place)
+  if not located(place) or type(place.category)~='string' or
+      (item.npcID and item.npcID~=place.npcID) then return false end
+  local wanted=item.category
+  if wanted=='Class Trainer' then
+    local class=addon.discovery and addon.discovery:PlayerClass()
+    wanted=class and class..' Trainer'
+  end
+  if type(wanted)~='string' then return false end
+  if wanted=='Profession Trainer' and addon.ProfessionFilters then
+    local professions=addon:ProfessionFilters()
+    if #professions>0 then
+      local matched=false
+      for _,profession in ipairs(professions) do
+        if type(place.specialty)=='string' and place.specialty:lower()==(profession..' Trainer'):lower() then
+          matched=true; break
+        end
+      end
+      if not matched then return false end
+    end
+  end
+  for _,field in ipairs({'category','specialty','trainerGroup','vendorGroup'}) do
+    if type(place[field])=='string' and place[field]:lower()==wanted:lower() then return true end
+  end
+  return wanted=='Vendor' and place.category:sub(-7)==' Vendor'
+end
+
+-- Greedy route through requested functions, resolving each destination from
+-- the preceding stop. Explicit locations stay fixed; only unresolved services
+-- change NPC. Direct estimates never manufacture walking connectivity.
+function route:Sequence(errands,origin,optimize,questPOIs,context)
+  local active,questByID={},{ }
+  for _,poi in ipairs(questPOIs or {}) do questByID[poi.questID]=poi end
+  for _,item in ipairs(errands) do
+    if not item.completed then
+      local entry=copy(item); entry.sequenceRank=nil
+      active[#active+1]=entry
+    end
+  end
+  local layout=self:DisplayOrder(active,{})
+  local reserved,free={},{}
+  for rank,item in ipairs(layout) do
+    if type(item.manualPosition)=='number' and item.manualPosition>=1 and item.manualPosition%1==0 then
+      reserved[rank]=item
+    else free[#free+1]=item end
+  end
+  local function resolve(item,from)
+    if item.questID then
+      local poi=questByID[item.questID]
+      if located(poi) then
+        local result=copy(item)
+        result.mapID,result.x,result.y,result.floor=poi.mapID,poi.x,poi.y,poi.floor
+        result.questLocationSource,result.projectedWaypoint=poi.source,poi.projected==true
+        return result,from and context.distance(from,result)
+      end
+      return
+    end
+    if located(item) then return copy(item),from and context.distance(from,item) end
+    if item.mapID or not from then return end
+    local best,bestDistance
+    for _,place in ipairs(context.candidates(from,item) or {}) do
+      if self:Matches(item,place) then
+        local distance=context.distance(from,place)
+        if type(distance)=='number' and distance>=0 and distance<math.huge and
+            (not bestDistance or distance<bestDistance or
+              (distance==bestDistance and tostring(place.id)<tostring(best.id))) then
+          best,bestDistance=place,distance
+        end
+      end
+    end
+    if best then return usePlace(copy(item),best),bestDistance end
+  end
+  local output,deferred={},{}
+  local from,cumulative,evidenceLost=origin,0,false
+  local walk=context.walk
+  local graph=walk and addon.walkGraph and addon.walkGraph:Build(walk.nodes,walk.edges,walk.playerLevel)
+  for rank=1,#layout do
+    local request=reserved[rank]
+    local selected,leg
+    if request then selected,leg=resolve(request,from)
+    else
+      local bestIndex,bestCost
+      for index,item in ipairs(free) do
+        local result,cost=resolve(item,from)
+        local score=result and (cost or math.huge) or math.huge
+        if not bestIndex or (optimize and (score<bestCost or
+            (score==bestCost and result and not selected))) then
+          bestIndex,bestCost,selected,leg=index,score,result,cost
+        end
+        if not optimize then break end
+      end
+      request=table.remove(free,bestIndex)
+    end
+    if not selected then
+      selected=copy(request); selected.sequenceRank=rank
+      if selected.questID then selected.x,selected.y=nil,nil end
+      selected.walkStatus='unknown-route'
+      deferred[#deferred+1]=selected
+      -- No unresolved stop can supply a next origin or a cumulative total.
+      from=nil; cumulative=nil; evidenceLost=true
+    else
+      selected.sequenceRank,selected.directYards=rank,leg
+      selected.walkStatus='unknown-route'
+      if leg and cumulative then cumulative=cumulative+leg; selected.cumulativeYards=cumulative
+      else cumulative=nil end
+      if graph and from and not evidenceLost then
+        local start={uiMapID=from.mapID,x=from.x,y=from.y,floor=from.floor or 0,
+          worldMapID=from.worldMapID,wz=from.wz}
+        local destination={uiMapID=selected.mapID,x=selected.x,y=selected.y,
+          floor=selected.floor or 0,worldMapID=selected.worldMapID,wz=selected.wz}
+        local prepared=addon.walkGraph:PrepareBuilt(graph,start)
+        local path=addon.walkGraph:FromPrepared(prepared,destination)
+        selected.walkStatus,selected.walkYards=path.status,path.yards
+        selected.walkWaypoints=path.status~='unknown-route' and path.waypoints or nil
+        selected.walkWarning=path.warning
+        selected.unknownStart,selected.unknownEnd=path.unknownStart,path.unknownEnd
+        if path.status~='known-route' then evidenceLost=true end
+      else evidenceLost=true end
+      output[#output+1]=selected
+      from={mapID=selected.mapID,x=selected.x,y=selected.y,floor=selected.floor}
+      if selected.walkStatus=='known-route' then
+        local node=selected.walkWaypoints[#selected.walkWaypoints]
+        from.worldMapID,from.wz,from.floor=node.worldMapID,node.wz,node.floor
+      end
+    end
+  end
+  return output,deferred
 end

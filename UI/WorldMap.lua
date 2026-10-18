@@ -87,6 +87,14 @@ local function newPin(canvas)
   local icon = pin:CreateTexture(nil, "OVERLAY")
   icon:SetAllPoints(pin)
   pin.icon = icon
+  local glow = pin:CreateTexture(nil, "BACKGROUND")
+  glow:SetSize(28, 28)
+  glow:SetPoint("CENTER", pin, "CENTER")
+  glow:SetTexture("Interface\\AddOns\\ErrandMaster\\Textures\\DestinationButtonGlow.blp")
+  glow:SetVertexColor(1, .78, .3, .65)
+  glow:SetBlendMode("ADD")
+  glow:Hide()
+  pin.glow = glow
   local label = pin:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   label:SetPoint("TOP", pin, "BOTTOM", 0, -2)
   pin.label = label
@@ -178,11 +186,13 @@ local function addPin(self, canvas, index, entry, kind, width, height, routeNumb
       ("P" .. routeNumber) or tostring(routeNumber)))
   local existing = category ~= "Waypoint" and coincidentIcon(self, canvas, x, y, width, height)
   pin.number:ClearAllPoints()
+  pin.glow:Hide()
   if existing then
     pin.icon:Hide()
     pin.number:SetPoint("TOPRIGHT", existing, "TOPRIGHT", 4, 5)
   else
     pin.icon:Show()
+    if category == "Waypoint" then pin.glow:Show() end
     pin.number:SetPoint("TOPRIGHT", pin, "TOPRIGHT", 4, 5)
   end
   local title = shortName(name) or kind

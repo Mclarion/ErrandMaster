@@ -1,0 +1,41 @@
+name: Publish temporary test checkpoint
+on:
+  push:
+    tags:
+      - v0.6.10-test1
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify checked-in release archive
+        run: |
+          cd releases
+          sha256sum --check ErrandMaster-v0.6.10-test1-forever.zip.sha256
+          cd ..
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          with ZipFile('releases/ErrandMaster-v0.6.10-test1-forever.zip') as archive:
+              assert archive.testzip() is None
+              assert len(archive.namelist()) == len(set(archive.namelist()))
+              for name in archive.namelist():
+                  assert name.startswith('ErrandMaster/')
+                  relative = name.removeprefix('ErrandMaster/')
+                  assert relative and '..' not in Path(relative).parts
+                  assert archive.read(name) == Path(relative).read_bytes(), relative
+          PY
+      - name: Publish prerelease with exact verified bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v0.6.10-test1 \
+            releases/ErrandMaster-v0.6.10-test1-forever.zip \
+            releases/ErrandMaster-v0.6.10-test1-forever.zip.sha256 \
+            --verify-tag --prerelease --latest=false \
+            --title 'v0.6.10-test1 — temporary in-game test checkpoint' \
+            --notes-file docs/RELEASE-v0.6.10-test1.md

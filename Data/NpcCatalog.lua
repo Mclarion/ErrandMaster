@@ -12,6 +12,8 @@ local classes={"Death Knight","Demon Hunter","Druid","Evoker","Hunter",
 local professions={"Alchemy","Blacksmithing","Cooking","Enchanting",
   "Engineering","First Aid","Fishing","Herbalism","Inscription",
   "Jewelcrafting","Leatherworking","Mining","Skinning","Tailoring"}
+local trainerAliases={Alchemist="Alchemy",Herbalist="Herbalism",
+  Fisherman="Fishing",Engineer="Engineering"}
 local function plain(value)
   local ok, safe = pcall(function()
     if type(issecretvalue)=="function" and issecretvalue(value) then return false end
@@ -46,6 +48,18 @@ local function trainerSpecialty(subtitle, flags, trainerFlag)
     end
   end
 end
+local function trainerAlias(name, subtitle, flags, trainerFlag)
+  if not hasFlag(flags,trainerFlag) then return end
+  local profession
+  for _,text in ipairs({name,subtitle}) do
+    if type(text)=="string" and plain(text) and #text<=120 then
+      profession=trainerAliases[text] or
+        trainerAliases[text:match("^Journeyman (%a+)$") or ""]
+      if profession then break end
+    end
+  end
+  if profession then return profession.." Trainer","Profession Trainer" end
+end
 local function vendorSpecialty(subtitle,flags,vendorFlag)
   if not hasFlag(flags,vendorFlag) or not plain(subtitle) or
       type(subtitle)~="string" or #subtitle>120 then return end
@@ -67,12 +81,69 @@ local function faction()
   if result=="Alliance" then return "A" end
   if result=="Horde" then return "H" end
 end
+-- Do not trust Lua's length operator or ipairs on provider-owned arrays.
+-- Bound raw entries, retain original numeric keys, and never invoke metatables.
+function catalog:ListKeys(list,limit,code,mapID)
+  local keys={}
+  if not plain(list) or type(list)~='table' or getmetatable(list) then
+    self:Issue(code..'-read',mapID); return keys
+  end
+  local count=0
+  for key in next,list do
+    count=count+1
+    if count>limit then self:Issue(code..'-cap',mapID); break end
+    if integer(key,1,2147483647) then keys[#keys+1]=key
+    else self:Issue(code..'-key',mapID) end
+  end
+  table.sort(keys)
+  if #keys>0 and keys[#keys]~=#keys then self:Issue(code..'-sparse',mapID) end
+  return keys
+end
+function catalog:ReadIds(list,limit,code)
+  local ids,seen={},{}
+  if not plain(list) or type(list)~='table' or getmetatable(list) then
+    self:Issue(code..'-read'); return ids
+  end
+  local count,keyCount,maxKey=0,0,0
+  for key,id in next,list do
+    if self.normalizer and coroutine.running()==self.normalizer then
+      if self.normalizeRemaining==0 then coroutine.yield() end
+      self.normalizeRemaining=self.normalizeRemaining-1
+      self.normalizedEntries=self.normalizedEntries+1
+    end
+    count=count+1
+    if count>limit then self:Issue(code..'-cap'); break end
+    if not integer(key,1,2147483647) then self:Issue(code..'-key')
+    else
+      keyCount=keyCount+1; maxKey=math.max(maxKey,key)
+      if not integer(id,1,2147483647) then self:Issue(code..'-value')
+      elseif seen[id] then self:Issue(code..'-duplicate')
+      else ids[#ids+1]=id; seen[id]=true end
+    end
+  end
+  if maxKey~=keyCount then self:Issue(code..'-sparse') end
+  return ids
+end
+function catalog:NormalizeStep(batch)
+  self.normalizeRemaining=batch
+  local ok=coroutine.resume(self.normalizer)
+  if not ok then
+    self:Issue('id-normalization-read')
+    self.state,self.reason='unavailable','QuestieDB ID normalization failed; reinitialize provider'
+  end
+  if not ok or coroutine.status(self.normalizer)=='dead' then self.normalizer=nil end
+end
 function catalog:Initialize()
+  self.normalizer,self.normalizedEntries=nil,0
+  self.issues={}
   self.state, self.reason = "unavailable", "QuestieDB Forever is required"
   self.provider, self.ids, self.areas, self.byMap, self.records = nil,nil,nil,nil,nil
   self.coverageLimited={}
+  self.mapIssues={}
+  self.mapServices={}
   self.indexIncomplete=false
   self.cursor = 1
+  self.itemCursor, self.itemIds, self.inventory = 1,nil,{}
   local provider=LibQuestieDB
   if not plain(provider) or type(provider)~="table" then return false end
   local inspected, compatible, reason, npc, source = pcall(function()
@@ -110,27 +181,114 @@ function catalog:Initialize()
     self.reason="QuestieDB map table invalid"; return false
   end
   local ids=call(npc.GetAllIds)
-  if type(ids)~="table" or not plain(ids) or #ids>100000 then
+  if type(ids)~="table" or not plain(ids) then
     self.reason="QuestieDB NPC IDs unavailable"; return false
   end
+  self.reason=nil
   local flagsOK, flags=pcall(function() return provider.Enum.npcFlags end)
   if not flagsOK or not plain(flags) or type(flags)~="table" then
     self.reason="QuestieDB service flags unavailable"; return false
   end
-  self.provider, self.ids, self.areas = provider, ids, areas
+  self.provider, self.ids, self.areas = provider, {}, areas
   self.flags, self.byMap, self.records = flags, {}, {}
-  self.state, self.reason = "indexing", nil
-  return true
+  local item=provider.Item
+  local itemIds
+  if plain(item) and type(item)=="table" and type(item.GetAllIds)=="function" and
+      type(item.vendors)=="function" and type(item.class)=="function" and
+      type(item.subClass)=="function" then
+    itemIds=call(item.GetAllIds)
+    if type(itemIds)~="table" or not plain(itemIds) then itemIds=nil end
+  end
+  if not itemIds then
+    self.indexIncomplete=true
+    self.reason="QuestieDB Item inventory unavailable; vendor specialty coverage limited to subtitles"
+  end
+  self.state = "indexing"
+  self.normalizer=coroutine.create(function()
+    self.ids=self:ReadIds(ids,100000,'npc-ids')
+    if itemIds then self.itemIds=self:ReadIds(itemIds,1000000,'item-ids') end
+  end)
+  self:NormalizeStep(80)
+  return self.state=='indexing'
+end
+function catalog:Issue(code,mapID)
+  self.issues=self.issues or {}
+  self.issues[code]=math.min(1000000,(self.issues[code] or 0)+1)
+  self.indexIncomplete=true
+  if mapID then
+    self.mapIssues[mapID]=self.mapIssues[mapID] or {}
+    local issues=self.mapIssues[mapID]
+    issues[code]=math.min(1000000,(issues[code] or 0)+1)
+    self.coverageLimited[mapID]=true
+  end
+  if not self.reason then self.reason="QuestieDB coverage incomplete: "..code end
 end
 function catalog:Status()
+  local issues={}
+  for code,count in pairs(self.issues or {}) do issues[code]=count end
   return {state=self.state,reason=self.reason,processed=math.max(0,(self.cursor or 1)-1),
+    issues=issues,
+    normalizing=self.normalizer~=nil,normalizedEntries=self.normalizedEntries or 0,
     total=self.ids and #self.ids or 0,
+    itemsProcessed=self.itemIds and math.min(#self.itemIds,(self.itemCursor or 1)-1) or 0,
+    itemsTotal=self.itemIds and #self.itemIds or 0,
     limited=self.indexIncomplete or next(self.coverageLimited or {})~=nil}
 end
 function catalog:IsReady() return self.state=="ready" end
 function catalog:Step(batch)
   if self.state~="indexing" then return self:IsReady() end
   batch = integer(batch,1,200) and batch or 80
+  if self.normalizer then self:NormalizeStep(batch); return false end
+  -- Item and NPC phases share the scheduler's per-call budget; never expose a
+  -- ready catalog until the complete inventory-to-NPC index has been built.
+  if self.itemIds and self.itemCursor<=#self.itemIds then
+    local item=self.provider.Item
+    local lastItem=math.min(#self.itemIds,self.itemCursor+batch-1)
+    for index=self.itemCursor,lastItem do
+      local id=self.itemIds[index]
+      if integer(id,1,2147483647) then
+        local ok,cls,sub,vendors=pcall(function()
+          local class=item.class(id)
+          if class~=6 and class~=5 and class~=0 then return class end
+          local subclass=class==0 and item.subClass(id) or nil
+          if class==0 and subclass~=5 then return class,subclass end
+          return class,subclass,item.vendors(id)
+        end)
+        if not ok then
+          self:Issue('item-read')
+          self.reason="Some QuestieDB Item reads failed; vendor specialties are incomplete"
+        elseif not integer(cls,0,255) or (cls==0 and not integer(sub,0,255)) then
+          self:Issue('item-class')
+        elseif cls==6 or cls==5 or (cls==0 and sub==5) then
+          local label=cls==6 and "Ammo Vendor" or cls==5 and "Reagent Vendor" or "Food Vendor"
+          if vendors~=nil and (type(vendors)~="table" or not plain(vendors) or
+              getmetatable(vendors)) then
+            self:Issue('item-vendors-read')
+            self.reason="Some QuestieDB Item vendor lists are invalid; vendor specialties are incomplete"
+          elseif type(vendors)=="table" then
+            local valid=pcall(function()
+              for _,key in ipairs(self:ListKeys(vendors,2000,'item-vendors')) do
+                local npcID=rawget(vendors,key)
+                if integer(npcID,1,2147483647) then
+                  local matched=self.inventory[npcID] or {}
+                  matched[label]=true
+                  self.inventory[npcID]=matched
+                else
+                  self:Issue('item-vendor-id')
+                end
+              end
+            end)
+            if not valid then
+              self:Issue('item-vendors-read')
+              self.reason="Some QuestieDB Item vendor lists could not be read"
+            end
+          end
+        end
+      end
+    end
+    self.itemCursor=lastItem+1
+    return false
+  end
   local last=math.min(#self.ids,self.cursor+batch-1)
   local npc=self.provider.Npc
   for index=self.cursor,last do
@@ -138,29 +296,43 @@ function catalog:Step(batch)
     if integer(id,1,2147483647) then
       local flags=call(npc.npcFlags,id)
       local service=false
+      if not integer(flags,0,4294967295) then self:Issue('npc-flags') end
       for _,entry in ipairs(categories) do
         if hasFlag(flags,self.flags[entry[2]]) then service=true; break end
       end
       if service then
         local read,spawns=pcall(npc.spawns,id)
+        if not read or type(spawns)~="table" or not plain(spawns) then
+          self:Issue('npc-spawns')
+        end
         if not read then
           self.indexIncomplete=true
           self.reason="Some QuestieDB NPC spawn reads failed; catalog is incomplete"
         end
         if type(spawns)=="table" and plain(spawns) then
           local indexed=pcall(function()
+            if next(spawns)==nil then self:Issue('empty-spawns') end
             for area, points in pairs(spawns) do
               local mapID=self.areas[area]
+              if not integer(mapID,1,10000000) then self:Issue('unmapped-area')
+              elseif type(points)~="table" or not plain(points) or next(points)==nil then
+                self:Issue('empty-spawns',mapID)
+              end
               if integer(mapID,1,10000000) and type(points)=="table" and
-                  plain(points) and #points>0 then
+                  plain(points) and next(points)~=nil then
                 local bucket=self.byMap[mapID] or {}
                 bucket[id]=true
                 self.byMap[mapID]=bucket
+                local services=self.mapServices[mapID] or {}
+                for _,entry in ipairs(categories) do
+                  if hasFlag(flags,self.flags[entry[2]]) then services[entry[1]]=true end
+                end
+                self.mapServices[mapID]=services
               end
             end
           end)
           if not indexed then
-            self.indexIncomplete=true
+            self:Issue('npc-map-read')
             self.reason="Some QuestieDB NPC map entries could not be indexed"
           end
         end
@@ -186,49 +358,79 @@ function catalog:LocationsOnMap(mapID, wanted)
     local records={}
     local npc=self.provider.Npc
     for id in pairs(self.byMap[mapID] or {}) do
+      if #records>=10000 then self:Issue('record-cap',mapID); break end
       local name=call(npc.name,id)
       local flags=call(npc.npcFlags,id)
       local friendly=call(npc.friendlyToFaction,id)
       local spawns=call(npc.spawns,id)
       local subtitle=call(npc.subName,id)
       local specialty,trainerGroup=trainerSpecialty(subtitle,flags,self.flags.TRAINER)
+      if not specialty then specialty,trainerGroup=trainerAlias(name,subtitle,flags,self.flags.TRAINER) end
       local vendorType,vendorGroup=vendorSpecialty(subtitle,flags,self.flags.VENDOR)
-      specialty=specialty or vendorType
+      local vendorLabels={}
+      if hasFlag(flags,self.flags.VENDOR) then
+        for _,label in ipairs({"Ammo Vendor","Reagent Vendor","Food Vendor"}) do
+          if self.inventory[id] and self.inventory[id][label] then
+            vendorLabels[#vendorLabels+1]={label,"QuestieDB Item vendors/class"}
+          end
+        end
+        if vendorType and not (self.inventory[id] and self.inventory[id][vendorType]) then
+          vendorLabels[#vendorLabels+1]={vendorType,"QuestieDB NPC subtitle"}
+        end
+      end
       if type(name)=="string" and #name>0 and #name<=120 and
           integer(flags,0,4294967295) and type(spawns)=="table" and plain(spawns) then
         local admitted=friendly=="A" or friendly=="H" or friendly=="AH"
         if admitted then
+          local minLevel=call(npc.minLevel,id)
           local ok=pcall(function()
             for area, points in pairs(spawns) do
               if self.areas[area]==mapID and type(points)=="table" and plain(points) then
-                for spawnIndex, point in ipairs(points) do
+                for _,spawnIndex in ipairs(self:ListKeys(points,10000,'spawn-list',mapID)) do
+                  if #records>=10000 then self:Issue('record-cap',mapID); return end
+                  local point=rawget(points,spawnIndex)
                   local x,y,phased=validSpawn(point)
                   if x and #records<10000 then
                     for _,entry in ipairs(categories) do
                       if hasFlag(flags,self.flags[entry[2]]) then
-                        records[#records+1]={id="npc-"..id.."-"..area.."-"..spawnIndex.."-"..entry[2],
+                        local specialties=entry[2]=="VENDOR" and #vendorLabels>0 and vendorLabels or
+                          {{entry[2]=="TRAINER" and specialty or nil,nil}}
+                        for _,kind in ipairs(specialties) do
+                        if #records>=10000 then
+                          self:Issue('record-cap',mapID)
+                          self.reason="QuestieDB map "..mapID.." exceeds the 10,000-record cap; NPC search is incomplete"
+                          break
+                        end
+                        records[#records+1]={id="npc-"..id.."-"..area.."-"..spawnIndex.."-"..entry[2].."-"..(kind[1] or "general"),
                           npcID=id,name=name,category=entry[1],mapID=mapID,x=x,y=y,
                           source="questiedb-forever",precision="candidate-spawn",
                           phaseUnverified=phased,friendlyToFaction=friendly,
-                          minLevel=call(npc.minLevel,id),subtitle=subtitle,
-                          specialty=specialty,trainerGroup=trainerGroup,
-                          vendorGroup=vendorGroup,
-                          functionEvidence=specialty and "QuestieDB NPC subtitle" or nil}
+                          minLevel=minLevel,subtitle=subtitle,
+                          specialty=kind[1],trainerGroup=entry[2]=="TRAINER" and trainerGroup or nil,
+                          vendorGroup=entry[2]=="VENDOR" and vendorGroup or nil,
+                          functionEvidence=kind[2] or (kind[1] and "QuestieDB NPC name/subtitle" or nil)}
+                        end
                       end
                     end
                   elseif x then
-                    self.coverageLimited[mapID]=true
+                    self:Issue('record-cap',mapID)
                     self.reason="QuestieDB map "..mapID.." exceeds the 10,000-record cap; NPC search is incomplete"
+                  else
+                    self:Issue('invalid-coordinate',mapID)
                   end
                 end
               end
             end
           end)
           if not ok then
-            self.coverageLimited[mapID]=true
+            self:Issue('npc-map-read',mapID)
             self.reason="Some QuestieDB NPC spawns could not be read; this map is incomplete"
           end
+        else
+          self:Issue('npc-faction',mapID)
         end
+      else
+        self:Issue('npc-record',mapID)
       end
     end
     table.sort(records,function(a,b)
@@ -251,6 +453,34 @@ function catalog:LocationsOnMap(mapID, wanted)
     end
   end
   return output
+end
+function catalog:Diagnostics(mapID, wanted)
+  local selected=self:LocationsOnMap(mapID,wanted)
+  local report=self:Status()
+  report.mapID,report.service=mapID,wanted
+  report.candidates,report.factionExcluded=#selected,0
+  report.mapLimited=self.coverageLimited and self.coverageLimited[mapID] or false
+  report.mapIssues={}
+  for code,count in pairs(self.mapIssues and self.mapIssues[mapID] or {}) do
+    report.mapIssues[code]=count
+  end
+  report.inventoryEvidence='not-evidenced'
+  for _,record in ipairs(selected) do
+    if record.functionEvidence=='QuestieDB Item vendors/class' then
+      report.inventoryEvidence='candidate-evidence'
+    end
+  end
+  local side=faction()
+  for _,record in ipairs(self.records and self.records[mapID] or {}) do
+    local matches=not wanted or record.category:lower()==wanted:lower() or
+      (record.specialty and record.specialty:lower()==wanted:lower()) or
+      (record.trainerGroup and record.trainerGroup:lower()==wanted:lower()) or
+      (record.vendorGroup and record.vendorGroup:lower()==wanted:lower())
+    if matches and side and record.friendlyToFaction~='AH' and record.friendlyToFaction~=side then
+      report.factionExcluded=report.factionExcluded+1
+    end
+  end
+  return report
 end
 function catalog:Find(query,mapID,x,y,width,height)
   if type(query)~="string" or #query<1 or #query>80 then return {} end

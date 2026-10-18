@@ -1,3 +1,5 @@
+--[[ Retired label-around-wedges and obsolete color expectations. Current
+-- hierarchy coverage lives in tests/test_wheel_navigation.lua.
 -- Exercise the new default hierarchy without altering an older player's custom slots.
 local addon = {ui={}}
 local function frame()
@@ -7,6 +9,9 @@ local function frame()
       return function() return frame() end end
     if method=='SetScript' then return function(self,name,callback) self.scripts[name]=callback end end
     if method=='SetSize' then return function(self,w,h) self.w,self.h=w,h end end
+    if method=='SetWidth' then return function(self,w) self.w=w end end
+    if method=='SetHeight' then return function(self,h) self.h=h end end
+    if method=='SetPoint' then return function(self,...) self.point={...} end end
     if method=='GetWidth' then return function(self) return self.w end end
     if method=='GetHeight' then return function(self) return self.h end end
     if method=='SetText' then return function(self,text) self.text=text end end
@@ -54,7 +59,7 @@ addon.db:Initialize('Wheel-Test')
 assert(loadfile('UI/RadialMenu.lua'))('ErrandMaster',addon)
 local wheel=addon.radial
 local function click(index)
-  local angle=math.pi/2-(index-1)*2*math.pi/wheel.count
+  local angle=wheel.tiers[#wheel.tiers].angles[index]
   mx,my=wheel.centerX+wheel.radius*math.cos(angle),
     wheel.centerY+wheel.radius*math.sin(angle)
   wheel.frame.scripts.OnMouseDown(wheel.frame,'LeftButton')
@@ -70,57 +75,99 @@ assert(wheel.slots[7].texture.texture:find('PackTravel.blp',1,true) and
   wheel.slots[9].texture.texture:find('PackQuestmark.blp',1,true) and
   wheel.lockIcon.texture:find('PackPadlockUnlocked.blp',1,true),
   'fresh root uses the supplied travel, quest and edit-action icons')
-local palette={Bank={.35,.55,.89},['Auction House']={.68,.45,.84},
-  Repair={.84,.27,.28},Vendor={.30,.77,.43},Mailbox={.95,.63,.27},
-  Trainer={.35,.55,.89},Travel={.95,.75,.29},Custom={.77,.34,.73}}
+local palette={Bank={.157,.439,1},['Auction House']={.675,.208,.847},
+  Repair={.933,.188,.188},Vendor={.031,.745,.471},Mailbox={.933,.537,0},
+  Trainer={0,.741,.835},Travel={.914,.686,0},Custom={.898,.169,.51}}
 for i=1,8 do
   local wanted=palette[addon.db.data.settings.wheelSlots[i].category]
   local actual=wheel.slots[i].sector.color
   for channel=1,3 do assert(actual[channel]==wanted[channel]) end
+  assert(wheel.slots[i].glow.color[1]==1 and
+    wheel.slots[i].glow.color[2]==1 and wheel.slots[i].glow.color[3]==1,
+    'golden borders must not take the wedge category tint')
 end
 click(4); assert(wheel.submenu=='Vendor' and wheel.count==6)
+assert(wheel.historyViews[1].medallions[4].texture:find('MedallionGreenActive.blp',1,true),
+  'open submenu keeps its parent medallion active')
+assert(wheel.historyViews[1].medallions[4].rotation==
+  wheel.historyViews[1].sectors[4].rotation and
+  math.abs(wheel.historyViews[1].sectors[4].w-
+    wheel.tiers[1].outerRadius*2*math.sqrt(2))<.001,
+  'retained rings use the same orientation and rotation compensation as the active ring')
+assert(wheel.slots[1].medallion.texture:find('MedallionRedInactive.blp',1,true))
 assert(#wheel.history==1 and wheel.history[1].menu==nil and
   wheel.historyViews[1].icons[4].shown and
-  wheel.historyViews[1].icons[1].texture:find('SoftPackBank.blp',1,true) and
-  wheel.historyViews[1].icons[4].desaturated and
-  wheel.historyViews[1].icons[4].alpha < .6 and
-  wheel.layerLinks[1].shown, 'root wheel remains visible, softened and connected')
-assert(wheel.centerX~=wheel.history[1].x or wheel.centerY~=wheel.history[1].y,
-  'child wheel materializes beside the selected parent section')
+  wheel.historyViews[1].icons[1].texture:find('PackBank.blp',1,true) and
+  wheel.historyViews[1].icons[4].alpha==1 and
+  wheel.historyViews[1].sectors[4].alpha>wheel.historyViews[1].sectors[1].alpha,
+  'root wheel remains visible with intact, lit selected icon')
+assert(wheel.centerX==wheel.history[1].x and wheel.centerY==wheel.history[1].y and
+  wheel.tiers[2].innerRadius>=wheel.tiers[1].outerRadius and
+  wheel.tiers[2].sweep<2*math.pi,
+  'children occupy a partial outer ring around the same center')
+local away=wheel.tiers[2].centerAngle+math.pi
+mx,my=wheel.centerX+wheel.radius*math.cos(away),
+  wheel.centerY+wheel.radius*math.sin(away)
+assert(wheel:IndexAtCursor()==nil,'empty side of a partial submenu is not clickable')
+local bankAngle=wheel.tiers[1].angles[1]
+mx,my=wheel.centerX+wheel.tiers[1].radius*math.cos(bankAngle),
+  wheel.centerY+wheel.tiers[1].radius*math.sin(bankAngle)
+wheel.frame.scripts.OnMouseDown(wheel.frame,'LeftButton')
+assert(wheel.submenu=='Bank','inner-ring choice remains interactive when a child is open')
+click(3); click(4)
+assert(wheel.submenu=='Vendor','Back then a different root choice opens its ring')
 assert(wheel.slots[1].texture.texture:find('PackFood.blp',1,true) and
   wheel.slots[2].texture.texture:find('PackReagents.blp',1,true) and
   wheel.slots[3].texture.texture:find('PackAmmo.blp',1,true),
   'use the newly supplied art in the corresponding vendor choices')
-assert(wheel.slots[1].sector.color[1]==.84 and
-  wheel.slots[2].sector.color[3]==.84 and
+assert(wheel.slots[1].sector.color[1]==.933 and
+  wheel.slots[2].sector.color[3]==.847 and
   wheel.slots[3].sector.color[1]==.68, 'vendor choices inherit pack colors')
 assert(wheel.slots[4].texture.texture:find('PackProfessionVendor.blp',1,true) and
   wheel.slots[5].texture.texture:find('PackGeneral.blp',1,true) and
   wheel.slots[6].texture.texture:find('PackBack.blp',1,true))
+assert(wheel.slots[4].label.text=='Profession Vendor' and
+  wheel.slots[4].label.point[1]=='CENTER' and
+  wheel.tiers[2].iconSize+wheel.tiers[2].labelHeight <=
+    wheel.tiers[2].outerRadius-wheel.tiers[2].innerRadius,
+  'full labels and icons fit inside each annular wedge without truncation')
+local function hasOverlap(slot)
+  local image,label=slot.texture,slot.label
+  return math.abs(image.point[4]-label.point[4])<(image.w+label.w)/2 and
+    math.abs(image.point[5]-label.point[5])<(image.h+label.h)/2
+end
+for i=1,wheel.count do
+  assert(not hasOverlap(wheel.slots[i]),'vendor icon/text boxes must not overlap')
+end
 click(4); assert(wheel.submenu=='Profession Vendor' and wheel.count==6)
-assert(#wheel.history==2 and wheel.historyViews[1].icons[4].shown and
-  wheel.historyViews[2].icons[4].shown and wheel.layerLinks[2].shown,
-  'three tiers stay simultaneously visible, with inactive tiers softened')
+for i=1,wheel.count do
+  assert(not hasOverlap(wheel.slots[i]),'profession icon/text boxes must not overlap')
+end
+assert(#wheel.history==2 and wheel.tiers[3].innerRadius>=wheel.tiers[2].outerRadius and
+  wheel.tiers[3].sweep<2*math.pi and wheel.tiers[3].centerAngle==wheel.tiers[2].angles[4],
+  'third tier opens outside the second and points at its selected parent')
 assert(wheel.slots[1].texture.texture:find('PackAlchemyVendor.blp',1,true))
 assert(wheel.menuEntries[3].category=='Cooking Vendor' and
   wheel.menuEntries[4].category=='First Aid Vendor' and
   wheel.menuEntries[5].category=='Fishing Vendor' and
-  wheel.slots[5].texture.texture:find('PackFishing.blp',1,true))
+  wheel.slots[5].texture.texture:find('PackFishingVendor.blp',1,true))
 click(2); assert(queued[1].category=='Mining Vendor' and not wheel.frame:IsShown())
 openWheel(); click(4); click(4); click(6)
 assert(wheel.submenu=='Vendor' and #wheel.history==1 and
   not wheel.historyViews[2].icons[4].shown and wheel.frame:IsShown(),
-  'nested Back restores the previous wheel and hides only the deepest tier')
+  'nested Back restores the previous ring and hides only the deepest tier')
 click(6); assert(wheel.submenu==nil and #wheel.history==0 and
   not wheel.historyViews[1].icons[4].shown,
-  'Vendor Back returns to the main wheel and clears inactive layers')
+  'Vendor Back returns to the main ring and clears inactive layers')
+assert(wheel.slots[1].sector.rotation==0 and wheel.slots[1].glow.rotation==0,
+  'returning from a rotated submenu resets the first root wedge and gold border')
 addon.ProfessionFilters=function() return {'Herbalism','Blacksmithing'} end
 click(4); click(4)
 assert(wheel.count==6 and
   wheel.slots[1].texture.texture:find('PackHerbalismVendor.blp',1,true) and
   wheel.slots[2].texture.texture:find('PackBlacksmithingVendor.blp',1,true) and
-  wheel.slots[1].sector.color[2]==.77 and
-  wheel.slots[2].sector.color[2]==.63,
+  wheel.slots[1].sector.color[2]==.745 and
+  wheel.slots[2].sector.color[2]==.537,
   'known professions and common professions get matching art and colors')
 click(6); click(6)
 addon.ProfessionFilters=function() return {},'unavailable' end
@@ -129,6 +176,20 @@ assert(wheel.count==13 and wheel.menuEntries[12].category=='Fishing Vendor',
   'without configured professions all nine primary and three common professions appear')
 assert(wheel.slots[1].texture.texture:find('PackAlchemyVendor.blp',1,true),
   'Alchemy uses the newly supplied profession icon')
+local vendorArt={['Cooking Vendor']='PackCookingVendor.blp',
+  ['Enchanting Vendor']='PackEnchantmentVendor.blp',
+  ['Engineering Vendor']='PackEngineeringVendor.blp',
+  ['First Aid Vendor']='PackFirstAidVendor.blp',
+  ['Fishing Vendor']='PackFishingVendor.blp',
+  ['Leatherworking Vendor']='PackLeatherworkingVendor.blp',
+  ['Mining Vendor']='PackMiningVendor.blp',
+  ['Tailoring Vendor']='PackTailoringVendor.blp'}
+for i,entry in ipairs(wheel.menuEntries) do
+  if vendorArt[entry.category] then
+    assert(wheel.slots[i].texture.texture:find(vendorArt[entry.category],1,true),
+      entry.category..' uses its own supplied artwork')
+  end
+end
 click(13); click(6)
 addon.ProfessionFilters=function() return {'Unrecognized Profession'} end
 click(4); click(4)
@@ -209,12 +270,22 @@ openWheel(); click(5); assert(wheel.submenu=='Mailbox' and wheel.count==2 and
 click(1); assert(queued[4].category=='Mailbox')
 openWheel(); click(8); assert(wheel.submenu=='Custom' and wheel.count==4)
 assert(wheel.slots[3].texture.texture:find('PackSettings.blp',1,true))
+click(3); assert(wheel.submenu=='Settings' and wheel.count==4 and
+  wheel.menuEntries[1].category=='Edit Wheel' and
+  wheel.menuEntries[2].category=='Pin Wheel' and
+  wheel.lockButton.shown==false and wheel.pinButton.shown==false,
+  'Edit and Pin/Unpin live in Settings, not an external rail')
+click(1); assert(addon.db.data.settings.wheelUnlocked and wheel.frame:IsShown())
+click(1); assert(not addon.db.data.settings.wheelUnlocked)
+click(2); assert(addon.db.data.settings.wheelPinned and
+  wheel.menuEntries[2].category=='Unpin Wheel')
+click(2); assert(not addon.db.data.settings.wheelPinned)
 click(3); assert(settingsOpened==1 and not wheel.frame:IsShown())
 local activatedFavorite
 addon.ActivateTarget=function(_,id) activatedFavorite=id; return true end
 openWheel(); click(7); click(6)
 assert(wheel.submenu=='Favorites' and wheel.count==4)
-assert(wheel.historyViews[2].icons[6].texture:find('SoftPackFavourites.blp',1,true),
+assert(wheel.historyViews[2].icons[6].texture:find('PackFavourites.blp',1,true),
   'Travel Favorites uses the supplied star')
 click(1); assert(formOpened==1, 'Add Coordinates opens an input form')
 openWheel(); click(7); click(6); click(2)
@@ -273,11 +344,11 @@ assert(#wheel.history==2 and wheel.centerX>=wheel.outerRadius and
   wheel.centerX<=UIParent.w-wheel.outerRadius and
   wheel.centerY>=wheel.outerRadius and
   wheel.centerY<=UIParent.h-wheel.outerRadius,
-  'three-tier wheel remains on a compact viewport')
-wheel.layerLinks[1].SetRotation=false
+  'three-tier ring fits a compact viewport')
+wheel.slots[2].sector.SetRotation=false
 wheel:Layout()
-assert(wheel.layerLinks[1].shown and wheel.layerLinksVertical[1].shown,
-  'a missing texture-rotation API still leaves a visible connector')
+assert(not wheel.slots[2].sector.shown and wheel.slots[2].texture.shown,
+  'missing texture rotation hides patterned wedges but preserves selection')
 wheel:Close()
 UIParent.w,UIParent.h=1920,1080
 openWheel()
@@ -315,8 +386,26 @@ assert(wheel.submenu=='Items' and wheel:DropEntry({type='item',id=8753}),
   'unlocked wheel can open and edit the item collection too')
 click(wheel.count)
 assert(addon.db:WheelCollectionRemove('item',1))
+click(8); assert(wheel.submenu=='Custom',
+  'edit mode keeps Custom reachable so the user can return to Lock')
+click(3); assert(wheel.submenu=='Settings' and wheel.menuEntries[1].category=='Lock Wheel')
+settings.wheelPinned=true
+local openedBefore=settingsOpened
+click(3)
+assert(settingsOpened==openedBefore+1 and not wheel.frame:IsShown(),
+  'AddOns Settings dismisses even a pinned unlocked wheel before opening the page')
+openWheel(); click(8); click(3); click(1)
+assert(not settings.wheelUnlocked, 'reopened wheel can be locked via Custom > Settings')
+openedBefore=settingsOpened
+click(3)
+assert(settingsOpened==openedBefore+1 and not wheel.frame:IsShown(),
+  'AddOns Settings also dismisses a pinned locked wheel')
+settings.wheelPinned=false
+openWheel()
 wheel.centerClose.scripts.OnMouseDown(wheel.centerClose)
 wheel.centerClose.scripts.OnClick(wheel.centerClose)
 assert(not wheel.frame:IsShown(), 'Cross closes an unlocked wheel')
 settings.wheelUnlocked=false
 print('default wheel palette, nested navigation and collection tests passed')
+]]
+dofile('tests/test_wheel_navigation.lua')

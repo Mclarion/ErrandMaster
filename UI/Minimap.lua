@@ -31,21 +31,28 @@ local function angle()
   return DEFAULT_ANGLE
 end
 
-local function radius(map)
-  local ok, width, height = pcall(function() return map:GetWidth(), map:GetHeight() end)
-  if not ok or not number(width, 1, 10000) or not number(height, 1, 10000) then return end
-  return math.max(width, height) / 2 + 10
+local function radii(button,map)
+  local ok,width,height,mapScale,buttonScale=pcall(function()
+    return map:GetWidth(),map:GetHeight(),map:GetEffectiveScale(),button:GetEffectiveScale()
+  end)
+  if not ok or not number(width,1,10000) or not number(height,1,10000) or
+      not number(mapScale,.001,100) or not number(buttonScale,.001,100) then return end
+  -- Offset units belong to the UIParent-owned button, not its minimap anchor.
+  local ratio=mapScale/buttonScale
+  return width*ratio/2+10,height*ratio/2+10
 end
 
 local function place(button, map, degrees)
-  local r = radius(map)
-  if not r then return false end
+  local rx,ry = radii(button,map)
+  if not rx then return false end
   local radians = math.rad(degrees)
-  local x, y = r * math.cos(radians), r * math.sin(radians)
+  local x, y = rx * math.cos(radians), ry * math.sin(radians)
+  if button.emRimX==x and button.emRimY==y then return true end
   local ok = pcall(function()
     button:ClearAllPoints()
     button:SetPoint("CENTER", map, "CENTER", x, y)
   end)
+  if ok then button.emRimX,button.emRimY=x,y end
   return ok
 end
 
@@ -56,7 +63,7 @@ local function cursorAngle(map)
   if not valid or not number(x, -1000000, 1000000) or not number(y, -1000000, 1000000) then return end
   local centered, mx, my, scale = pcall(function()
     local centerX, centerY = map:GetCenter()
-    return centerX, centerY, UIParent:GetEffectiveScale()
+    return centerX, centerY, map:GetEffectiveScale()
   end)
   if not centered or not number(mx, -1000000, 1000000) or
     not number(my, -1000000, 1000000) or not number(scale, .001, 100) then return end
@@ -68,16 +75,40 @@ local function cursorAngle(map)
   return degrees
 end
 
+local function completeAttachment(self, map)
+  local item = self.pendingButton
+  if not item or not place(item, map, angle()) then return false end
+  item:SetAlpha(1)
+  item:EnableMouse(true)
+  self.button = item
+  self.pendingButton = nil
+  return true
+end
+
 function control:Attach()
   if self.button then return true end
   local ok, map, create = pcall(function() return Minimap, CreateFrame end)
   if not ok or not plain(map) or not map or not plain(create) or type(create) ~= "function" then return false end
+  if self.pendingButton then return completeAttachment(self, map) end
   local ready, button = pcall(function()
-    local item = create("Button", nil, map) -- no secure or minimap-button template
-    item:SetSize(28, 28)
-    if not place(item, map, angle()) then return end
+    local item = create("Button", nil, UIParent) -- avoid Minimap clipping and map-child strata
+    -- An unanchored button must still receive OnUpdate, but must not draw or accept clicks.
+    item:SetAlpha(0)
+    item:EnableMouse(false)
+    item:SetSize(36, 36)
+    item:SetFrameStrata("FULLSCREEN_DIALOG")
+    item:SetFrameLevel(map:GetFrameLevel() + 10)
+    local glow=item:CreateTexture(nil,"BACKGROUND")
+    glow:SetSize(48,48)
+    glow:SetPoint("CENTER",item,"CENTER")
+    glow:SetTexture("Interface\\AddOns\\ErrandMaster\\Textures\\DestinationButtonGlow.blp")
+    glow:SetBlendMode("ADD")
+    glow:SetVertexColor(1,.82,.4)
+    glow:SetAlpha(.7)
+    item.emGlow=glow
     local icon = item:CreateTexture(nil, "ARTWORK")
-    icon:SetAllPoints(item)
+    icon:SetSize(30, 30)
+    icon:SetPoint("CENTER", item, "CENTER")
     icon:SetTexture(ICON)
     item:RegisterForClicks("LeftButtonUp", "RightButtonUp", "MiddleButtonUp")
     item:RegisterForDrag("LeftButton")
@@ -100,8 +131,16 @@ function control:Attach()
       self.dragging = true
       self.moved = nil
     end)
-    item:SetScript("OnUpdate", function()
-      if not self.dragging then return end
+    local elapsed=0
+    item:SetScript("OnUpdate", function(_,dt)
+      if not self.dragging then
+        elapsed=elapsed+(number(dt,0,10) and dt or .2)
+        if elapsed>=.2 then
+          elapsed=0
+          if self.pendingButton==item then self:Attach() else place(item,map,angle()) end
+        end
+        return
+      end
       local degrees = cursorAngle(map)
       if degrees and place(item, map, degrees) then
         self.dragAngle = degrees
@@ -122,6 +161,6 @@ function control:Attach()
     return item
   end)
   if not ready or not button then return false end
-  self.button = button
-  return true
+  self.pendingButton = button
+  return completeAttachment(self, map)
 end

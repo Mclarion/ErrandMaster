@@ -1,3 +1,5 @@
+--[[ Retired expert studio and fixed-color assertions. Live wheel editing
+-- coverage lives in tests/test_wheel_editing.lua.
 -- Dynamic wheel studio contract, independent of the live Forever client.
 local addon = {ui={OpenCategory=function() end}, Print=function() end}
 local frames = {}
@@ -250,3 +252,5 @@ GetCursorInfo=function() return 'spell',1,nil,123 end
 InCombatLockdown=function() return true end
 assert(not wheel:DropNative() and #addon.db.data.settings.wheelSlots==count)
 print('dynamic wheel editor tests passed')
+]]
+dofile('tests/test_wheel_editing.lua')

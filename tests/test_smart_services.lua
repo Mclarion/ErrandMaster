@@ -92,4 +92,43 @@ assert(discovery:HandleEvent("BANKFRAME_OPENED"))
 local observedBank
 for _, place in ipairs(places) do if place.category == "Bank" then observedBank = place end end
 assert(observedBank and observedBank.name == "Bailor — Bank")
+-- One merchant can supply multiple specialties; only inspected item classes count.
+UnitName = function() return "Mixed Supplies" end
+addon.Position = function() return 10, .7, .7 end
+local merchantRows = {{6,2},{0,5},{5,0},{0,0}}
+GetMerchantNumItems = function() return #merchantRows end
+GetMerchantItemLink = function(index) return "item:" .. (1000 + index) end
+GetItemInfoInstant = function(id)
+  local row = merchantRows[id - 1000]
+  return id, "", "", "", 1, row[1], row[2]
+end
+assert(discovery:HandleEvent("MERCHANT_SHOW"))
+local specialties = {}
+for _, place in ipairs(places) do
+  if place.x == .7 then specialties[place.category] = place end
+end
+assert(specialties["Food Vendor"], "observed food inventory must record Food Vendor")
+assert(specialties["Reagent Vendor"], "observed reagent inventory must record Reagent Vendor")
+assert(specialties["Ammo Vendor"], "mixed inventory must retain Ammo Vendor")
+assert(specialties["Food Vendor"].source == "service-event")
+-- Generic consumables and unreadable item information do not prove food stock.
+addon.Position = function() return 10, .6, .6 end
+merchantRows = {{0,0},{0,nil}}
+assert(discovery:HandleEvent("MERCHANT_SHOW"))
+GetItemInfoInstant = function() error("uncached item") end
+assert(discovery:HandleEvent("MERCHANT_SHOW"))
+for _, place in ipairs(places) do
+  if place.x == .6 then
+    assert(place.category == "Vendor" or place.category == "Repair",
+      "unknown consumables must not infer specialty")
+  end
+end
+-- Keep the existing bounded read and opt-in contract even for huge merchants.
+local reads = 0
+GetMerchantNumItems = function() return 1000 end
+GetMerchantItemLink = function(index) reads = reads + 1; return "item:" .. index end
+assert(discovery:HandleEvent("MERCHANT_SHOW"))
+assert(reads == 200, "merchant reads must stay bounded")
+addon.db.data.settings.discoverServices = false
+assert(not discovery:HandleEvent("MERCHANT_SHOW") and reads == 200)
 print("smart service discovery tests passed")

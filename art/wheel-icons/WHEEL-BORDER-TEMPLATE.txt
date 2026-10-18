@@ -1,0 +1,44 @@
+Wheel border artwork template (source pixels; no player art replaced)
+=================================================================
+Each texture: 512 x 512 transparent RGBA PNG, converted to uncompressed
+BLP2 BGRA with the 1172-byte BLP header. Center (256,256). Source +Y points
+UP; source wedge points toward 12 o'clock. Source disk radius is 248 px.
+Rotation pivot is exactly (256,256); leave the eight-pixel perimeter clear.
+Explicit eight-coordinate UV rotation replaces SetRotation. Runtime widget
+diameter for tier outer radius R UIParent units = 2 * R / (248/256).
+No sqrt(2) compensation is used. Run tools/export_wheel_border_templates.py
+for all 72 PNG masks, exact dimensions.csv, and the zipped authoring guide.
+
+For count N = 1..24, one source wedge per tier and layer. Source angle
+phi = atan2(x-256, 256-y); wedge center phi=0. Keep pixels only in
+r_min <= sqrt((x-256)^2+(y-256)^2)/248 <= 1 and
+abs(phi) <= sweep / (2*N). Edge coverage antialias ~2 source pixels.
+Tier 0: r_min=.42, sweep=2*pi (360 degrees).
+Tier 1: r_min=.70, sweep=min(5.5,max(pi/2,N*.42)) radians.
+Tier 2: r_min=.74, same non-root sweep formula.
+The first root icon at 12 o'clock; root i has angle pi/2-(i-1)*2*pi/N.
+Non-root i has centerAngle+sweep/2-(i-.5)*sweep/N; centerAngle comes
+from the selected parent icon. Both layers rotate by angle - pi/2. Tier 1
+outer physical radius = root outer radius/.70; tier 2 outer = tier 1/.74.
+Draw seams to the tier outer boundary (do not inset) to avoid clear gaps.
+
+Pattern source: WheelPatternT{tier}N{count:02}.blp, category-tintable.
+Border source: WheelBorderT{tier}N{count:02}.blp, untinted gold, may be
+replaced by ornate filigree art if it obeys the same mask. Keep separate
+transparent alpha and never paste jewels onto the border; medallions are
+individually oriented supplied source PNGs. Rim medallion center is placed
+at R*(cos(angle),sin(angle)). Medallion PNG canvas uses a 70%-diameter
+inset so widget diameter is physical medallion size/.70. Gold
+hover hub: WheelCenterHover.blp, square 512 source, shown instead of the
+lettered WheelCenter.blp when a sector has a name.
+The supplied medallion's longer point faces up in source pixels, so rotate
+it by angle + pi/2 (the wedge layer uses angle - pi/2): toward the center
+at every rim angle. All sector labels are hidden at runtime. The normal
+unhovered hub displays filled WheelCenter art. The hover plate fits the
+root hole exactly, rather than covering nearby icons. Its wrapped 12-unit
+label is 86% of hub diameter wide and 70% high. Extremely small settings
+still require player readability review; no offline readability guarantee.
+
+Generated current BLP layers and the deterministic renderer in
+../../tools/render_ring_art.py are the pixel-exact templates for every
+supported count. Do not treat offline previews as a WoW client screenshot.

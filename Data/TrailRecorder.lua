@@ -58,7 +58,7 @@ local function clean(value)
   if not ok then return end
   if not number(result.time, 0, 100000000) or
       not integer(result.uiMapID, 1, 10000000) or
-      not integer(result.worldMapID, 1, 10000000) or
+      not integer(result.worldMapID, 0, 10000000) or
       not integer(result.floor, 0, 50) or
       not number(result.x, 0, 1) or not number(result.y, 0, 1) or
       not number(result.wx, -10000000, 10000000) or
@@ -159,7 +159,7 @@ function trails:NativeSample()
   if not worldOK or not number(wx, -10000000, 10000000) or
       not number(wy, -10000000, 10000000) or
       not number(wz, -10000000, 10000000) or
-      not integer(worldMapID, 1, 10000000) then return end
+      not integer(worldMapID, 0, 10000000) then return end
   local flags = {IsFlying, UnitOnTaxi, IsSwimming, UnitInVehicle}
   for i=1,4 do
     local check = flags[i]

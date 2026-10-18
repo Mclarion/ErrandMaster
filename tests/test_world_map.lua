@@ -15,6 +15,8 @@ local function frame(parent)
   function result:SetScript(name, fn) self.scripts[name]=fn end
   function result:SetText(text) self.text=text end
   function result:SetTexture(texture) self.texture=texture end
+  function result:SetVertexColor(...) self.vertexColor={...} end
+  function result:SetBlendMode(mode) self.blend=mode end
   function result:CreateTexture() local child=frame(self); function child:SetColorTexture(...) self.color={...} end; return child end
   function result:CreateFontString() return frame(self) end
   return result
@@ -92,6 +94,12 @@ canvas.GetChildren=function() return nil end
 addon.worldMap:Refresh()
 assert(pins[1].icon.shown and pins[1].number.point[2]==pins[1],
   'own marker is restored when the native icon goes away')
+route[1].category='Waypoint'
+addon.worldMap:Refresh()
+assert(pins[1].glow.shown and pins[1].glow.blend=='ADD', 'waypoint artwork is backlit')
+route[1].category=nil
+addon.worldMap:Refresh()
+assert(not pins[1].glow.shown, 'pooled waypoint glow must not leak onto ordinary markers')
 observed[1].name=string.rep('x', 23)..'é service'
 addon.worldMap:Refresh()
 assert(not pins[3].label.text:find(string.char(195), 1, true),

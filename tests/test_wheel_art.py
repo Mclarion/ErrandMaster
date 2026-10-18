@@ -2,6 +2,7 @@
 import struct
 import runpy
 from pathlib import Path
+from PIL import Image
 
 root = Path(__file__).resolve().parents[1] / "Textures"
 render = runpy.run_path(str(root.parent / "tests/generate_wheel_art.py"))["asset"]
@@ -29,7 +30,19 @@ for count in range(1, 25):
     assert data[1172+3] == 0 and data[1172+3+512*512*4-4] == 0
     if count in (1, 7, 8, 24):
         assert data == art["trim"](count), count
+    if count == 7:
+        decoded = Image.frombytes("RGBA", (512, 512), data[1172:], "raw", "BGRA")
+        solid = [(red, blue) for red, _, blue, alpha in decoded.getdata() if alpha > 150]
+        assert sum(red-blue for red, blue in solid) > 30*len(solid), "gold trim must decode gold, not blue"
 center = (root / "WheelCenter.blp").read_bytes()
-assert center == art["medallion"]()
+assert center == art["center_asset"]()
 assert center[1172+3] == 0
+hover = (root / "WheelCenterHover.blp").read_bytes()
+assert hover == art["hover_center"]() and hover[1172+3] == 0
+for color in ("Green", "Blue", "Purple", "Red", "Yellow", "Orange", "Pink", "Cyan", "White"):
+    for state in ("Active", "Inactive"):
+        name = f"Medallion{color}{state}"
+        data = (root / f"{name}.blp").read_bytes()
+        assert data == art["medallion_asset"](color, state)
+        assert data[1172+3] == 0
 print("24 gold trim BLPs and medallion passed structural and regeneration checks")

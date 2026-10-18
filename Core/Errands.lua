@@ -4,7 +4,7 @@ local errands = addon.errands
 local db = addon.db
 local MAX_ERRANDS = 200
 local fields = {name=true, description=true, category=true, priority=true, mapID=true,
-  x=true, y=true, npcID=true, target=true, origin=true, scope=true, questID=true,
+  x=true, y=true, floor=true, npcID=true, target=true, origin=true, scope=true, questID=true,
   favorite=true}
 local function coordinate(n)
   return type(n) == "number" and n == n and n >= 0 and n <= 1
@@ -27,6 +27,9 @@ local function validate(item)
   assert((item.mapID == nil and item.x == nil and item.y == nil) or
     (positiveInteger(item.mapID) and coordinate(item.x) and coordinate(item.y)),
     "map ID and normalized X/Y coordinates must be supplied together")
+  assert(item.floor == nil or (item.mapID ~= nil and type(item.floor) == "number" and
+    item.floor == item.floor and item.floor % 1 == 0 and
+    item.floor >= 1 and item.floor <= 50), "invalid floor")
 end
 local function position(list, id)
   for i, item in ipairs(list) do if item.id == id then return i, item end end
@@ -39,7 +42,21 @@ function errands:All(character)
     if a.order == b.order then return a.id < b.id end
     return a.order < b.order
   end)
-  return result
+  local arranged, free = {}, {}
+  for _, item in ipairs(result) do
+    local slot = item.manualPosition
+    if type(slot) == 'number' and slot == slot and slot % 1 == 0 and
+        slot >= 1 and slot <= #result and not arranged[slot] then
+      arranged[slot] = item
+    else free[#free+1] = item end
+  end
+  local nextFree = 1
+  for i = 1, #result do
+    if not arranged[i] then
+      arranged[i], nextFree = free[nextFree], nextFree+1
+    end
+  end
+  return arranged
 end
 function errands:Get(id)
   for _, item in ipairs(self:All()) do if item.id == id then return item end end
@@ -59,6 +76,8 @@ function errands:Add(input)
   item.completed = false
   item.order = db.data.nextId
   table.insert(db:Bucket(item.scope), item)
+  local current = db.data.characters[db.character]
+  if current then current.activeErrandId = nil end
   return item
 end
 function errands:Update(id, changes)
@@ -73,7 +92,9 @@ function errands:Update(id, changes)
   if changes.name ~= nil and candidate.origin == "suggested" then
     candidate.origin = "manual" -- An explicit name edit overrides automatic NPC naming.
   end
-  if changes.clearLocation then candidate.mapID, candidate.x, candidate.y = nil, nil, nil end
+  if changes.clearLocation then
+    candidate.mapID, candidate.x, candidate.y, candidate.floor = nil, nil, nil, nil
+  end
   validate(candidate)
   if candidate.scope ~= item.scope then
     local old = db:Bucket(item.scope)
@@ -100,5 +121,22 @@ function errands:Reorder(id, target)
   assert(positiveInteger(target) and target <= #items, "invalid position")
   local moved = table.remove(items, index)
   table.insert(items, target, moved)
-  for i, item in ipairs(items) do item.order = i end
+  -- Only the moved item becomes fixed. Shift existing anchors as a list move
+  -- crosses them; all other stops remain eligible for optimization.
+  local old = moved.manualPosition
+  if old then
+    for _, item in ipairs(items) do
+      if item ~= moved and item.manualPosition and item.manualPosition > old then
+        item.manualPosition = item.manualPosition - 1
+      end
+    end
+  end
+  for _, item in ipairs(items) do
+    if item ~= moved and item.manualPosition and item.manualPosition >= target then
+      item.manualPosition = item.manualPosition + 1
+    end
+  end
+  moved.manualPosition = target
+  local current = db.data.characters[db.character]
+  if current then current.activeErrandId = nil end
 end

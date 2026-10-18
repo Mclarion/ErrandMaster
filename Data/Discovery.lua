@@ -46,25 +46,48 @@ local function serviceLabel(category, fallback)
   if #label <= 80 then return label end
   return fallback .. " — " .. category
 end
-local function merchantHasAmmo()
+local function merchantSpecialties()
+  local found, issues = {}, {}
+  local function issue(code) issues[code]=(issues[code] or 0)+1 end
+  local function classification(value)
+    return safe(value) and type(value)=='number' and value==value and
+      value>=0 and value<=255 and value%1==0
+  end
   if not safe(GetMerchantNumItems) or type(GetMerchantNumItems) ~= "function" or
       not safe(GetMerchantItemLink) or type(GetMerchantItemLink) ~= "function" or
-      not safe(GetItemInfoInstant) or type(GetItemInfoInstant) ~= "function" then return false end
+      not safe(GetItemInfoInstant) or type(GetItemInfoInstant) ~= "function" then
+    issue('api'); return found,issues
+  end
   local ok, count = pcall(GetMerchantNumItems)
   if not ok or not safe(count) or type(count) ~= "number" or
-      count ~= count or count < 1 or count > 10000 then return false end
+      count ~= count or count < 0 or count > 10000 or count%1~=0 then
+    issue('item-count'); return found,issues
+  end
+  if count>200 then issue('scan-cap') end
   for index = 1, math.min(count, 200) do
     local linked, link = pcall(GetMerchantItemLink, index)
     if linked and safe(link) and type(link) == "string" then
       local textID = link:match("item:(%d+)")
       local id = textID and tonumber(textID)
       if id and id >= 1 and id <= 2147483647 then
-        local info, _, _, _, _, _, itemClass = pcall(GetItemInfoInstant, id)
-        if info and safe(itemClass) and itemClass == 6 then return true end -- Projectile.
+        local info, _, _, _, _, _, itemClass, itemSubclass = pcall(GetItemInfoInstant, id)
+        if info and classification(itemClass) and (itemClass~=0 or classification(itemSubclass)) then
+          if itemClass == 6 then found["Ammo Vendor"] = true
+          elseif itemClass == 5 then found["Reagent Vendor"] = true
+          elseif itemClass == 0 and safe(itemSubclass) and itemSubclass == 5 then
+            found["Food Vendor"] = true
+          end
+        else
+          issue('item-info')
+        end
+      else
+        issue('item-link')
       end
+    else
+      issue('item-link')
     end
   end
-  return false
+  return found,issues
 end
 local function record(category, name, mapID, x, y, source)
   local before = #addon.locations:All()
@@ -116,21 +139,39 @@ function discovery:HandleEvent(event)
   else return false end
   local mapID, x, y = position()
   if not mapID then return false end
+  local report = {partial=false, failures={}, saved={}}
+  local function save(kind, fallback)
+    local item = record(kind, serviceLabel(kind, fallback), mapID, x, y, "service-event")
+    if item then report.saved[kind] = true
+    else report.partial, report.failures[kind] = true, "not-saved" end
+  end
   local repair = false
-  if event == "MERCHANT_SHOW" and safe(CanMerchantRepair) and
-      type(CanMerchantRepair) == "function" then
-    local ok, value = pcall(CanMerchantRepair)
-    if not ok or not safe(value) then return false end
-    repair = value == true
+  if event == "MERCHANT_SHOW" then
+    if not safe(CanMerchantRepair) or type(CanMerchantRepair) ~= "function" then
+      report.partial, report.failures.Repair = true, "unavailable"
+    else
+      local ok, value = pcall(CanMerchantRepair)
+      if not ok or not safe(value) or type(value) ~= "boolean" then
+        report.partial, report.failures.Repair = true, "unavailable"
+      else repair = value == true end
+    end
   end
-  local item = record(category, serviceLabel(category, label), mapID, x, y, "service-event")
-  if not item then return false end
-  if repair then record("Repair", serviceLabel("Repair", "Observed repair access"), mapID, x, y, "service-event") end
-  if event == "MERCHANT_SHOW" and merchantHasAmmo() then
-    record("Ammo Vendor", serviceLabel("Ammo Vendor", "Observed ammo access"),
-      mapID, x, y, "service-event")
+  save(category, label)
+  if repair then save("Repair", "Observed repair access") end
+  if event == "MERCHANT_SHOW" then
+    local specialties,issues = merchantSpecialties()
+    for code,count in pairs(issues) do
+      report.partial=true
+      report.failures['Inventory/'..code]=tostring(count)
+    end
+    for _, specialty in ipairs({"Ammo Vendor", "Reagent Vendor", "Food Vendor"}) do
+      if specialties[specialty] then
+        save(specialty, "Observed vendor access")
+      end
+    end
   end
-  return true
+  self.lastReport = report
+  return next(report.saved) ~= nil, report
 end
 
 -- A player explicitly assigns the category. The POI API supplies coordinates,

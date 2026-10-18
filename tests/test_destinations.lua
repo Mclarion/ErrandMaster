@@ -1,224 +1,226 @@
-local addon = {db={data={settings={showDestinations=true}}}}
-local frames = {}
+local addon={db={data={settings={showDestinations=true,optimize=true}}}}
 local function frame(parent)
-  local f = {parent=parent, scripts={}, shown=false}
-  function f:SetSize(w,h) self.width,self.height=w,h end
-  function f:SetWidth(w) self.width=w end
-  function f:SetHeight(h) self.height=h end
-  function f:SetJustifyH(value) self.justifyH=value end
-  function f:SetJustifyV(value) self.justifyV=value end
-  function f:SetPoint(...) self.point={...} end
-  function f:ClearAllPoints() self.point=nil end
-  function f:SetText(text) self.text=text end
-  function f:SetScript(event, fn) self.scripts[event]=fn end
-  function f:HookScript(event, fn)
-    self.hooks=self.hooks or {}; self.hooks[event]=fn
-  end
-  function f:Show() self.shown=true end
-  function f:Hide() self.shown=false end
-  function f:IsShown() return self.shown end
-  function f:CreateFontString() return frame(self) end
-  function f:CreateTexture() return frame(self) end
-  function f:SetTexture(value) self.texture=value end
-  function f:EnableMouse(...) self.mouseEnabled={...} end
-  function f:SetMovable(value) self.movable=value end
-  function f:RegisterForDrag(...) self.dragButtons={...} end
-  function f:SetClampedToScreen(value) self.clamped=value end
-  function f:StartMoving() self.moving=true end
-  function f:StopMovingOrSizing() self.moving=false end
-  frames[#frames+1]=f
-  return f
+ local f={parent=parent,scripts={},shown=false}
+ for _,name in ipairs({'SetSize','SetPoint','SetMinMaxValues','SetVertexColor'}) do
+  f[name]=function(self,...) self[name..'Args']={...}; if name=='SetSize' then self.width,self.height=... elseif name=='SetPoint' then self.point={...} elseif name=='SetMinMaxValues' then self.min,self.max=... else self.vertexColor={...} end end
+ end
+ function f:SetWidth(x) self.width=x end
+ function f:SetHeight(x) self.height=x end
+ function f:GetWidth() return self.width end
+ function f:GetHeight() return self.height end
+ function f:GetBottom() return 30 end
+ function f:GetTop() return 30+(self.height or 0) end
+ function f:ClearAllPoints() self.point=nil end
+ function f:SetText(x) self.text=x end
+ function f:SetTexture(x) self.texture=x end
+ function f:SetAlpha(x) self.alpha=x end
+ function f:SetScript(k,v) self.scripts[k]=v end
+ function f:Show() self.shown=true end
+ function f:Hide() self.shown=false; if self.scripts.OnHide then self.scripts.OnHide(self) end end
+ function f:IsShown() return self.shown end
+ function f:CreateFontString() return frame(self) end
+ function f:CreateTexture() return frame(self) end
+ function f:GetParent() return self.parent end
+ function f:EnableMouse() end
+ function f:RegisterForDrag(...) self.dragButtons={...} end
+ function f:SetMovable(v) self.movable=v end
+ function f:SetResizable(v) self.resizable=v end
+ function f:SetResizeBounds(...) self.bounds={...} end
+ function f:SetClampedToScreen(v) self.clamped=v end
+ function f:StartMoving() self.moving=true end
+ function f:StartSizing() self.sizing=true end
+ function f:StopMovingOrSizing() self.moving=false; self.sizing=false end
+ function f:SetScrollChild(v) self.child=v end
+ function f:GetVerticalScroll() return self.scroll or 0 end
+ function f:SetVerticalScroll(v) self.scroll=v end
+ function f:SetValue(v) self.value=v; if self.scripts.OnValueChanged then self.scripts.OnValueChanged(self,v) end end
+ function f:SetValueStep(v) self.step=v end
+ function f:SetOrientation(v) self.orientation=v end
+ function f:SetJustifyH(v) self.justifyH=v end
+ function f:SetJustifyV(v) self.justifyV=v end
+ return f
 end
-UIParent=frame()
-CreateFrame=function(_,_,parent,template)
-  local result=frame(parent)
-  if template=='BasicFrameTemplateWithInset' then
-    result.TitleText=frame(result)
-    result.CloseButton=frame(result)
-  end
-  return result
-end
-InCombatLockdown=function() return false end
-local planned, displayMap = 0, nil
-local ordered, deferred = {}, {}
-addon.Plan=function(_, map) planned=planned+1; displayMap=map; return ordered,deferred,42,.2,.4 end
-local chunk=assert(loadfile('UI/Destinations.lua')); chunk('ErrandMaster',addon)
-assert(type(addon.destinations.Open)=='function')
-assert(type(addon.destinations.Restore)=='function' and addon.destinations:Restore(),
-  'target tracker opens by default on login')
-assert(planned==1 and displayMap==nil, 'standalone list plans for the player map')
-local window=addon.destinations.frame
-assert(window.parent==UIParent and window.clamped and window.movable)
-assert(window.point[1]=='TOPLEFT' and window.width<=340,
-  'own compact tracker starts away from the usual right-side guide space')
-assert(addon.destinations.rows[1].width and addon.destinations.rows[1].width<=300,
-  'tracker rows wrap inside the available width')
-assert(addon.destinations.controls[1].activate.icon.texture:find('PackWaypoint.blp',1,true),
-  'Go uses the supplied waypoint artwork without replacing its text label')
-assert(window.CloseButton.hooks and window.CloseButton.hooks.OnClick,
-  'native template close button saves the visibility choice')
-window:Hide() -- The inherited close handler hides its parent frame.
-window.CloseButton.hooks.OnClick(window.CloseButton)
-assert(not addon.db.data.settings.showDestinations and
-  not addon.destinations:Restore(), 'closing with X persists across login')
-addon.destinations:Open()
-assert(window:IsShown() and addon.db.data.settings.showDestinations)
-assert(window.dragButtons[1]=='LeftButton')
-window.scripts.OnDragStart(window)
-assert(window.moving)
-window.scripts.OnDragStop(window)
-assert(not window.moving)
-window.scripts.OnDragStart(window)
-local savedPosition
-addon.windowPosition={Save=function(_, _, key) savedPosition=key end}
-window.scripts.OnHide(window)
-assert(not window.moving and not window.errandMoving and savedPosition=='targets',
-  'closing a frame mid-drag must stop and persist its final position')
-local all = {
-  {id=1,name='Bank|test',mapID=42,x=.25,y=.5,directYards=125,completed=false},
-  {id=2,name='Other',mapID=42,x=.9,y=.1,walkStatus='known-route',walkYards=45,completed=false},
-  {id=3,name='Mailbox',mapID=43,completed=false},
-  {id=4,name='Unlocated',completed=false},
-  {id=5,name='Finished',completed=true},
-}
-local calls, activated, refreshed = {}, nil, 0
-addon.errands = {}
+UIParent=frame(); UIParent:SetSize(800,600)
+CreateFrame=function(_,_,parent) return frame(parent) end
+GameTooltip={SetOwner=function() end,SetText=function(self,t) self.text=t end,Show=function() end,Hide=function() end}
+local mx,my=100,400
+GetCursorPosition=function() return mx,my end
+local ordered,deferred={},{}
+addon.Plan=function() return ordered,deferred end
+local all,calls={},{}
+addon.errands={}
 function addon.errands:All() return all end
-function addon.errands:Get(id)
-  for _, item in ipairs(all) do if item.id == id then return item end end
+function addon.errands:Get(id) for _,v in ipairs(all) do if v.id==id then return v end end end
+function addon.errands:Reorder(id,index)
+ calls[#calls+1]={id,index}
+ for i,v in ipairs(all) do if v.id==id then table.insert(all,index,table.remove(all,i)); return end end
 end
-function addon.errands:Complete(id, value)
-  calls[#calls+1]={'complete',id,value}; self:Get(id).completed=value
+function addon.errands:Update(id,change) for k,v in pairs(change) do self:Get(id)[k]=v end end
+function addon.errands:Delete(id) for i,v in ipairs(all) do if v.id==id then table.remove(all,i); return end end end
+addon.ActivateTarget=function(_,id) addon.activated=id end
+addon.Refresh=function(self) self.destinations:Refresh() end
+assert(loadfile('UI/Destinations.lua'))('ErrandMaster',addon)
+local d=addon.destinations
+assert(d:Restore())
+assert(not d.frame:IsShown() and #d.entries==0 and d.frame.CloseButton==nil)
+assert(addon.db.data.settings.showDestinations)
+assert(d:GetNavigationAnchor()==d.frame)
+assert(d.frame.resizable and d.frame.clamped and d.frame.bounds[1]<=240)
+assert(d.scroll and d.scroll.child==d.content and d.scrollbar)
+assert(not d.prevButton and not d.nextButton)
+for i=1,12 do
+ all[i]={id=i,name='Target '..i,mapID=42,directYards=100+i,category=i==1 and 'Bank' or 'Vendor'}
+ ordered[i]=all[i]
 end
-function addon.errands:Update(id, changes)
-  calls[#calls+1]={'update',id,changes}
-  for key,value in pairs(changes) do self:Get(id)[key]=value end
+d:Refresh()
+assert(d.frame:IsShown() and #d.entries==12 and #d.cards==12 and #d.rows==12)
+assert(d.scrollbar.shown and d.scrollbar.max>0 and d.content.height>d.scroll.height)
+assert(d.cards[12].point and d.cards[12].shown)
+assert(d.cards[1].height<=68 and d.frame.width<=340)
+assert(d.cards[1].pattern.alpha and d.cards[1].pattern.alpha<.8)
+assert(d.cards[1].frameArt.texture:find('CardFrame.blp',1,true))
+assert(d.cards[1].pattern.texture:find('DestinationCardPattern.blp',1,true),
+ 'destination-only tinted card art fades at both edges')
+assert(d.rows[1].justifyH=='CENTER' and d.rows[1].justifyV=='MIDDLE',
+ 'card label is centered in its available area')
+assert(d.rows[1].text:find('~101 yd direct - Unknown Path',1,true))
+local controls=d.controls[1]
+assert(controls.remove and controls.favorite and controls.activate and not controls.done and not controls.up and not controls.down)
+for _,action in ipairs({'remove','favorite','activate'}) do
+ local b=controls[action]
+ assert(not b.text or b.text=='')
+ assert(b.icon and b.icon.texture and b.scripts.OnEnter and b.scripts.OnLeave)
+ assert(b.glow and b.glow.texture and b.glow.texture:find('DestinationButtonGlow.blp',1,true)
+  and b.glow.alpha and b.glow.alpha>.2,
+  'control has a brighter backlit halo behind the original icon')
+ assert(b.point[1]=='TOPRIGHT' and b.width>=20 and b.height>=17,
+  'the icon retains a larger clickable region without stretching')
+ assert(b.icon.width==15 and b.icon.height==15)
 end
-function addon.errands:Delete(id)
-  calls[#calls+1]={'delete',id}
-  for i, item in ipairs(all) do if item.id==id then table.remove(all,i); return end end
+controls.favorite.scripts.OnClick(); assert(all[1].favorite)
+controls.activate.scripts.OnClick(); assert(addon.activated==1)
+d.controls[5].activate.scripts.OnClick()
+assert(calls[#calls][1]==5 and calls[#calls][2]==1 and addon.db.data.settings.optimize)
+local source=d.cards[8]
+source.scripts.OnDragStart(source)
+assert(d.ghost and d.ghost.shown and d.dragSource==8)
+mx,my=230,312
+source.scripts.OnUpdate(source,.05)
+assert(d.ghost.point and d.ghost.point[4]==mx and d.ghost.point[5]==my)
+local prior=#calls
+mx,my=230,180 -- row three's center in the unscrolled viewport
+-- Animated source remains mouse focus even as the pointer reaches the third slot.
+GetMouseFoci=function() return {source} end
+source.scripts.OnUpdate(source,.05)
+assert(#calls==prior and d.preview and d.preview[3].id==8, 'live preview reorders before persistence')
+assert(d.cards[3].animation or d.cards[3].targetY)
+local oldScroll=d.scroll:GetVerticalScroll()
+mx,my=230,8; source.scripts.OnUpdate(source,.2)
+assert(d.scroll:GetVerticalScroll()>oldScroll)
+local value=d.scroll:GetVerticalScroll()
+d.scroll.scripts.OnMouseWheel(d.scroll,1)
+assert(d.scroll:GetVerticalScroll()<value, 'mouse wheel scrolls the list')
+source.scripts.OnDragStop(source)
+assert(calls[#calls][1]==8 and calls[#calls][2]==3,
+  'release persists only the moved item to its new position')
+assert(not d.ghost.shown and not d.dragSource and addon.db.data.settings.optimize)
+-- Hit-test slots in viewport space, not animated cards or the stale hover.
+-- The scale converts hardware cursor pixels back to UIParent coordinates.
+UIParent.GetEffectiveScale=function() return 2 end
+GetCursorPosition=function() return mx*2,my*2 end
+local scrolled=d.scrollMax
+d.scroll:SetVerticalScroll(scrolled)
+source=d.cards[1]; mx,my=230,31
+source.scripts.OnDragStart(source)
+GetMouseFoci=function() return {source} end
+source.scripts.OnUpdate(source,.01)
+assert(d.dragTarget==12, 'bottom boundary addresses last visible slot after scrolling')
+source.scripts.OnDragStop(source)
+assert(calls[#calls][1]==1 and calls[#calls][2]==12,
+ 'scaled cursor release at bottom persists the actual bottom slot')
+d.scroll:SetVerticalScroll(0)
+source=d.cards[12]; mx,my=230,324
+source.scripts.OnDragStart(source)
+source.scripts.OnUpdate(source,.01)
+assert(d.dragTarget==1, 'top boundary addresses first slot')
+source.scripts.OnDragStop(source)
+assert(calls[#calls][1]==12 and calls[#calls][2]==1)
+UIParent.GetEffectiveScale=nil; GetCursorPosition=function() return mx,my end
+d.frame:SetSize(900,900); d.frame.scripts.OnSizeChanged(d.frame,900,900)
+assert(d.frame.width<=UIParent.width and d.frame.height<=UIParent.height and #d.entries==12)
+all={}; ordered={}; deferred={}; d:Refresh()
+assert(not d.frame.shown and #d.entries==0 and addon.db.data.settings.showDestinations)
+addon.db.data.settings.showDestinations=false; d:Refresh(); assert(not d.frame.shown)
+all={{id='opaque',name='Unknown|target',mapID=43}}; deferred=all
+d:Refresh(); assert(not d.frame.shown)
+d:Toggle(); assert(d.frame.shown and d.rows[1].text:find('Unknown/target',1,true))
+assert(d.rows[1].text:find('Unknown Location',1,true))
+local sample={
+ {id='partial',name='Partial',x=.25,y=.5,walkStatus='partial-route',walkYards=40},
+ {id='flight',name='Trainer',taxiFlightNode='Ironforge'},
+ {id='zone',name='Bank',nearbyZoneCandidate={zoneName='Border',directYards=150}},
+ {id='done',name='Finished',completed=true},
+}
+all=sample; ordered={sample[1],sample[2],sample[3]}; deferred={}; d:Refresh()
+assert(d.rows[1].text:find('Connector Unknown',1,true))
+assert(d.rows[2].text:find('Walk Unknown',1,true))
+assert(d.rows[3].text:find('Unknown Path',1,true))
+assert(#d.entries==3 and not d.cards[4].shown,
+  'completed errands never keep the otherwise-empty sidebar visible')
+all={sample[4]}; ordered={}; deferred={}; d:Refresh()
+assert(#d.entries==0 and not d.frame.shown)
+all={sample[1],sample[2],sample[3]}; ordered=all; d:Refresh()
+UIParent:SetSize(240,180)
+d.frame.scripts.OnSizeChanged(d.frame,900,900)
+assert(d.frame.width<=240 and d.frame.height<=180 and d.scrollbar.shown,
+ 'short narrow viewport clamps shell without removing targets')
+local many={}
+for i=1,205 do many[i]={id=i,name='Target '..i} end
+all=many; ordered=many; deferred={}; d:Refresh()
+assert(#d.entries==205 and d.cards[205].shown,
+ 'scroll content includes every target, beyond the old fixed collection cap')
+-- Exercise the real persisted queue and planner, not the index-recording stub.
+local real={}
+assert(loadfile('Core/Database.lua'))('ErrandMaster',real)
+assert(loadfile('Core/Errands.lua'))('ErrandMaster',real)
+assert(loadfile('Routing/RoutePlanner.lua'))('ErrandMaster',real)
+ErrandMasterDB=nil; real.db:Initialize('Drag-Realm')
+real.db.data.settings.showDestinations=true
+local a=real.errands:Add({name='A',mapID=42,x=.9,y=.5})
+local b=real.errands:Add({name='B',mapID=42,x=.5,y=.5})
+local c=real.errands:Add({name='C',mapID=42,x=.1,y=.5})
+function real:Plan()
+ return self.route:Plan(self.errands:All(),42,0,.5,true,nil,nil,100,100)
 end
-function addon.errands:Reorder(id, target)
-  calls[#calls+1]={'reorder',id,target}
-  for i, item in ipairs(all) do
-    if item.id==id then table.insert(all,target,table.remove(all,i)); return end
-  end
-end
-addon.ActiveTarget=function(_, active, pending)
-  if activated then
-    local selected=addon.errands:Get(activated)
-    if selected and not selected.completed then return selected end
-  end
-  return active and active[1]
-end
-addon.ActivateTarget=function(_, id)
-  activated=id
-  addon:Refresh()
-  return true
-end
-addon.Refresh=function() refreshed=refreshed+1; addon.destinations:Refresh() end
-local function replan()
-  ordered,deferred={},{}
-  for _, item in ipairs(all) do
-    if not item.completed then
-      if item.mapID==42 then ordered[#ordered+1]=item
-      else deferred[#deferred+1]=item end
-    end
-  end
-end
-replan()
-assert(addon.destinations:Refresh())
-local rows, buttons=addon.destinations.rows,addon.destinations.controls
-assert(#rows==6 and #buttons==6, 'bounded two-line row pool with controls')
-assert(rows[1].text:find('1. Current: Bank/test',1,true) and
-  not rows[1].text:find('|',1,true) and
-  rows[1].text:find('\n',1,true), 'safe two-line current row')
-assert(rows[1].text:find('25.0, 50.0; ~125 yd direct estimate',1,true))
-assert(rows[2].text:find('2. Next: Other',1,true) and
-  rows[2].text:find('45 yd observed path',1,true))
-assert(rows[3].text:find('Deferred: Mailbox',1,true) and
-  rows[3].text:find('route unknown',1,true))
-assert(rows[4].text:find('Deferred: Unlocated',1,true))
-assert(rows[5].text:find('Done: Finished',1,true))
-assert(buttons[1].activate.shown and buttons[1].done.shown and
-  buttons[1].remove.shown and buttons[1].down.shown and
-  not buttons[1].up.shown and buttons[5].done.text=='Reopen' and
-  not buttons[5].activate.shown, 'visible contextual controls')
-assert(buttons[1].favorite.text=='Fav' and buttons[1].favorite.shown)
-buttons[1].favorite.scripts.OnClick()
-assert(all[1].favorite and buttons[1].favorite.text=='Unfav' and
-  rows[1].text:find('[Fav]',1,true), 'target toggles persistent favorite')
-buttons[1].favorite.scripts.OnClick()
-assert(all[1].favorite == false and buttons[1].favorite.text=='Fav')
-refreshed=0
-buttons[1].activate.scripts.OnClick()
-assert(activated==1 and refreshed==1, 'Go delegates activation')
-buttons[2].up.scripts.OnClick()
-assert(calls[#calls][1]=='reorder' and calls[#calls][2]==2 and
-  calls[#calls][3]==1 and addon.db.data.settings.optimize==false and refreshed==2,
-  'manual move uses global order, disables optimization, refreshes')
-replan(); addon.destinations:Refresh()
-assert(rows[1].text:find('Stop: Other',1,true) and
-  rows[2].text:find('Current: Bank/test',1,true),
-  'explicit active target remains current after a reorder')
-buttons[1].done.scripts.OnClick()
-assert(calls[#calls][1]=='complete' and calls[#calls][2]==2 and
-  calls[#calls][3]==true and refreshed==3)
-replan(); addon.destinations:Refresh()
-assert(rows[4].text:find('Done: Other',1,true))
-buttons[4].done.scripts.OnClick()
-assert(calls[#calls][1]=='complete' and calls[#calls][2]==2 and
-  calls[#calls][3]==false, 'completed row can be reopened')
-replan(); addon.destinations:Refresh()
-buttons[2].remove.scripts.OnClick()
-assert(calls[#calls][1]=='delete' and calls[#calls][2]==1, 'remove delegates deletion')
-replan(); addon.destinations:Refresh()
-ordered={}
-for i=1,30 do ordered[i]={id=100+i,name='Stop '..i,mapID=42,x=.5,y=.5} end
-deferred={{id=200,name='Waiting'}}
-assert(addon.destinations:Refresh())
-assert(#rows==6 and addon.destinations.nextButton.shown)
-addon.destinations.nextButton.scripts.OnClick()
-assert(rows[1].text:find('Stop 7',1,true))
-for i=1,30 do addon.destinations.nextButton.scripts.OnClick() end
-assert(not addon.destinations.nextButton.shown, 'page cannot exceed last page')
-assert(rows[1].text:find('Deferred: Waiting',1,true))
-ordered={{id=101,name='Fresh',mapID=42,x=.1,y=.2}}
-deferred={}
-addon.destinations:Refresh()
-assert(rows[1].text:find('Fresh',1,true) and
-  not addon.destinations.nextButton.shown, 'refresh clamps stale page')
-ordered={{id=301,name='Partial',mapID=42,x=.25,y=.5,
-  walkStatus='partial-route',walkYards=40},
-  {id=302,name='No path',directYards=80}}
-deferred={{id=303,name='Trainer',taxiFlightNode='Ironforge'},
-  {id=304,name='Bank',nearbyZoneCandidate={name='Border Banker',zoneName='Border',directYards=150}},
-  {id=305,name='Unknown',walkStatus='unknown-route'}}
-addon.destinations:Refresh()
-assert(rows[1].text:find('25.0, 50.0',1,true) and
-  rows[1].text:find('40 yd observed; connector unknown',1,true),
-  'a partial segment retains target coordinates and unknown-connector warning')
-assert(rows[2].text:find('~80 yd direct estimate',1,true))
-assert(rows[3].text:find('Trainer',1,true) and rows[3].text:find('Ironforge',1,true)
-  and rows[3].text:find('walk unknown',1,true))
-assert(rows[4].text:find('Border',1,true) and rows[4].text:find('direct; route unknown',1,true))
-assert(rows[5].text:find('Unknown path:',1,true))
-assert(rows[6].text:find('Done: Finished',1,true) and
-  not buttons[6].activate.shown, 'completed target remains visible')
-all={}; ordered={}; deferred={}
-addon.destinations:Refresh()
-assert(rows[1].text:find('No targets',1,true) and
-  not rows[2].shown and not buttons[2].done.shown,
-  'empty state has no stale interactive controls')
-all={{id='em-42',name='String ID',mapID=42,completed=false}}
-activated=nil; replan(); addon.destinations:Refresh()
-assert(rows[1].text:find('Current: String ID',1,true) and
-  buttons[1].activate.shown, 'production string IDs remain actionable')
-buttons[1].activate.scripts.OnClick()
-assert(activated=='em-42', 'activation preserves opaque string ID')
-addon.destinations:Toggle()
-assert(not window.shown and not addon.db.data.settings.showDestinations)
-assert(not addon.destinations:Restore(), 'an intentionally hidden tracker stays hidden')
-addon.destinations:Toggle()
-assert(window.shown and addon.db.data.settings.showDestinations)
+function real:Refresh() self.destinations:Refresh() end
+assert(loadfile('UI/Destinations.lua'))('ErrandMaster',real)
+local tracker=real.destinations
+tracker:Create(); tracker:Refresh()
+assert(tracker.entries[1].id==c.id and tracker.entries[2].id==b.id and
+ tracker.entries[3].id==a.id and real.errands:All()[1].id==a.id,
+ 'optimized display differs from saved insertion order')
+tracker.scroll:SetVerticalScroll(0)
+local realSource=tracker.cards[3]
+mx,my=100,tracker.scroll:GetTop()-1
+GetMouseFoci=function() return {realSource} end
+realSource.scripts.OnDragStart(realSource)
+realSource.scripts.OnUpdate(realSource,.01)
+realSource.scripts.OnDragStop(realSource)
+assert(a.manualPosition==1 and tracker.entries[1].id==a.id,
+ 'real drag handlers anchor A at displayed C slot 1, not saved C index 3')
+assert(b.manualPosition==nil and c.manualPosition==nil)
+local repair=real.errands:Add({name='Repair',category='Repair',mapID=43,x=.2,y=.4})
+tracker:Refresh()
+assert(tracker.entries[4].id==repair.id,'off-map repair starts deferred')
+realSource=tracker.cards[4]
+mx,my=100,tracker.scroll:GetTop()-1
+GetMouseFoci=function() return {realSource} end
+realSource.scripts.OnDragStart(realSource)
+realSource.scripts.OnUpdate(realSource,.01)
+realSource.scripts.OnDragStop(realSource)
+local planned,pending=real:Plan()
+local visible=real.route:DisplayOrder(planned,pending)
+assert(repair.manualPosition==1 and visible[1].id==repair.id)
+assert(tracker.entries[1].id==visible[1].id,
+ 'sidebar must use the same combined manual order as navigation, including deferred Repair')
 print('destinations tests passed')

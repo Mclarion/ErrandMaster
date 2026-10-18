@@ -66,7 +66,7 @@ def asset(name):
     for kind, points, width in ART[name]:
         getattr(d, "rectangle" if kind == "rect" else kind)(points, outline=INK, width=width) if kind != "line" else d.line(points, fill=INK, width=width, joint="curve")
     image = image.resize((128, 128), Image.Resampling.LANCZOS)
-    raw = image.tobytes()
+    raw = image.tobytes("raw", "BGRA")
     header = struct.pack("<4sI4BII", b"BLP2", 1, 3, 8, 8, 0, 128, 128)
     header += struct.pack("<16I", 1172, *([0] * 15))
     header += struct.pack("<16I", len(raw), *([0] * 15)) + bytes(1024)
