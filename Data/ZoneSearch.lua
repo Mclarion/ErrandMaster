@@ -168,7 +168,21 @@ function search:RouteContext(observed,walk)
       end
     end
     for _,place in ipairs(observed or {}) do consider(place) end
+
+    if item.category=='Flight Master' and not item.npcID and addon.transportCatalog then
+      for _,place in ipairs(addon.transportCatalog:ServiceCandidatesOnMap(from.mapID)) do
+        consider(place)
+      end
+    end
     local instance=projected(from)
+    local objects=addon.objects
+    if item.category=='Mailbox' and not item.npcID and objects and objects:IsReady() then
+      for map in pairs(objects.byMap or {}) do
+        if map==from.mapID or instance~=nil then
+          for _,place in ipairs(objects:LocationsOnMap(map,'Mailbox')) do consider(place) end
+        end
+      end
+    end
     local npcs=addon.npcs
     if npcs and npcs:IsReady() then
       local base=item.category

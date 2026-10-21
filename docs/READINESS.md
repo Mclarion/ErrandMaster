@@ -1,4 +1,6 @@
-# v0.6.10-test1 offline and client readiness
+# ErrandMaster offline and client readiness
+
+Current test candidate: 0.6.14-test1. See `RELEASE-v0.6.14-test1.md` for this candidate's changes and outstanding in-client checks. Version and installation statements below document earlier checkpoints; they are not evidence that 0.6.14 has been installed or accepted.
 
 Current checkpoint: temporary test release for Forever executable 1.60.1.70450, interface metadata 16001. The previously installed baseline was v0.6.9-test1. See RELEASE-v0.6.10-test1.md for the current change list and client test requirements. This checkpoint does not close any live acceptance item; older version and installation descriptions below are historical. Installation is separately verified and never inferred from source tests.
 

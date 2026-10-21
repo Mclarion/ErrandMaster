@@ -1,5 +1,6 @@
 local f=dofile('tests/wheel_fixture.lua')()
 local w,db=f.wheel,f.addon.db
+f:legacyLayout()
 local settings=db.data.settings
 local first=settings.wheelSlots[1]
 f:root()
@@ -17,7 +18,7 @@ assert(w.submenu=='Profession Vendor' and #w.history==2)
 assert(w.tiers[3].innerRadius==w.tiers[2].outerRadius)
 assert(w.menuEntries[1].category=='Cooking Vendor' or
   w.menuEntries[1].category:find('Vendor',1,true))
-assert(w.slots[1].texture.shown and not w.slots[1].label.shown)
+assert(w.slots[1].texture.shown and w.slots[1].label.shown)
 for i=1,w.count do
   assert(f:hit(i,nil,.96)==i)
 end
@@ -56,7 +57,8 @@ f:click(w.count)
 assert(w.submenu==nil)
 local opened=0
 f.addon.addonSettings={Open=function(_,page) opened=opened+1; assert(page=='layout' or page==nil) end}
-f:click(8); f:click(3)
+settings.wheelSlots[8]={type='category',category='Settings'}
+w:Layout(); f:click(8)
 assert(w.submenu=='Settings')
 f:click(1)
 assert(settings.wheelUnlocked and settings.wheelPinned==nil)
@@ -73,7 +75,7 @@ assert(w.count==6 and w.menuEntries[1].category=='Alchemy Vendor' and
   w.menuEntries[2].category=='Mining Vendor')
 assert(w.slots[1].texture.texture:find('PackAlchemyVendor.blp',1,true) and
   w.slots[2].texture.texture:find('PackMiningVendor.blp',1,true))
-w:Close(); f:root(); f:click(6); f:click(2)
+w:Close(); f:root(); f:click(6); f:click(3)
 assert(w.submenu=='Profession Trainer' and w.menuEntries[1].category=='Alchemy Trainer' and
   w.slots[1].texture.texture:find('PackAlchemyTrainer.blp',1,true))
 db.GetWheelProfessions=old
@@ -90,7 +92,7 @@ assert(w.submenu=='Items' and w:DropEntry({type='item',id=5678}))
 assert(settings.wheelItems[1].id==5678)
 f:click(2)
 assert(w.submenu==nil)
-f:click(8); f:click(3); f:click(2)
+f:click(8); f:click(2)
 assert(opened==2 and w.frame.shown and settings.wheelUnlocked,
   'ordinary settings action must not dismiss persistent edit mode')
 settings.wheelUnlocked=false

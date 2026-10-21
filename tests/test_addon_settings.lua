@@ -62,6 +62,14 @@ assert(page:Register() and page.mode=='settings')
 assert(page:Register() and calls==1, 'registration must be idempotent')
 assert(page:Open() and opened==99)
 assert(page.frame.w==460 and page.frame.h==490)
+local headerIcon,headerGlow
+for _,child in ipairs(page.frame.children) do
+  if child.kind=='Texture' and child.texture and child.texture:find('PackLogo.blp',1,true) then headerIcon=child end
+  if child.kind=='Texture' and child.texture and child.texture:find('DestinationButtonGlow.blp',1,true) then headerGlow=child end
+end
+assert(headerIcon and headerGlow and headerIcon.w<=25 and headerGlow.w>=46 and
+  headerGlow.blend=='ADD' and headerGlow.color[4]>=.85,
+  'settings header logo retains its rim, with a stronger independent backlight')
 local function within(canvas, child)
   if child.point and child.point[2]==canvas and child.point[3]=='TOPLEFT' then
     local x,y=child.point[4],child.point[5]
@@ -99,6 +107,12 @@ assert(not page.menus[1]:IsShown())
 page.optimize:Click(false)
 page.targets:Click(false)
 assert(addon.db.data.settings.optimize==false and addon.db.data.settings.showDestinations==false)
+assert(page.waypointUI.checked and addon.db.data.settings.useWaypointUI==true)
+page.waypointUI:Click(false)
+assert(addon.db.data.settings.useWaypointUI==false)
+page:Refresh();assert(not page.waypointUI.checked)
+page.waypointUI:Click(true)
+assert(addon.db.data.settings.useWaypointUI==true)
 page.bind:Click()
 assert(select(3,state())==1 and select(2,state())>0)
 assert(page.status.text:find('Escape cancels',1,true))

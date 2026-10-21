@@ -73,13 +73,13 @@ function quests:OnMap(mapID)
   end
   local seen = {}
   for i = 1, math.min(count, 100) do
-    local read, id, place, x, y = pcall(function()
+    local read, id, place, x, y, isStart = pcall(function()
       local row = rows[i]
       if not plain(row) or type(row) ~= "table" then return end
-      return row.questID, row.mapID, row.x, row.y
+      return row.questID, row.mapID, row.x, row.y, row.isQuestStart
     end)
     if read and integer(id) and plain(place) and place == mapID and coordinate(x) and
-        coordinate(y) and not seen[id] then
+        coordinate(y) and plain(isStart) and isStart ~= true and not seen[id] then
       local indexed, index = pcall(getIndex, id)
       if indexed and integer(index) then
         local infoOK, info = pcall(getInfo, index)
@@ -91,7 +91,7 @@ function quests:OnMap(mapID)
             #title <= 80 and title:match("%S") and plain(infoID) and infoID == id and
             plain(header) and header == false then
           list[#list+1] = {questID=id, title=title, mapID=mapID, x=x, y=y,
-            source="active-quest-poi"}
+            source="active-quest-poi", areaTarget=true}
           seen[id] = true
         end
       end
@@ -223,27 +223,162 @@ function quests:ZoneInventory()
   return groups, complete
 end
 
+-- Resolve queued native destinations independently of their old/saved map.
+-- Never expand/collapse headers during route refreshes: that emits log events.
+function quests:QueuedWaypoints()
+  if not addon.errands or type(addon.errands.All) ~= 'function' then return {} end
+  local adapter=addon.questWaypoints and
+    type(addon.questWaypoints.ForQuest)=='function' and addon.questWaypoints
+  local getIndex,getInfo,getNext=logMethod('GetLogIndexForQuestID'),
+    logMethod('GetInfo'),logMethod('GetNextWaypoint')
+  local ok,requests=pcall(addon.errands.All,addon.errands)
+  if not ok or not plain(requests) or type(requests)~='table' then return {} end
+  -- The log's native waypoint may point to a *remote* map. If absent, only
+  -- query actual native quest pins on maps we can identify; a zone header is
+  -- a localized string and cannot be treated as a map ID.
+  local maps, known = {}, {}
+  local function include(map)
+    if integer(map) and not known[map] then known[map]=true; maps[#maps+1]=map end
+  end
+  if plain(C_Map) and type(C_Map)=='table' then
+    local safe, getMap=pcall(function() return C_Map.GetBestMapForUnit end)
+    if safe and plain(getMap) and type(getMap)=='function' then
+      local found, map=pcall(getMap,'player')
+      if found then include(map) end
+    end
+  end
+  local poiMap=logMethod('GetMapForQuestPOIs')
+  if poiMap then local found,map=pcall(poiMap); if found then include(map) end end
+  local result,seen={},{}
+  for i=1,200 do
+    local read,item=pcall(function() return requests[i] end)
+    if not read or item==nil then break end
+    local fetched,id,completed,savedMap=pcall(function()
+      return item.questID,item.completed,item.mapID
+    end)
+    if fetched and integer(id) and plain(completed) and not completed and not seen[id] then
+      seen[id]=true
+      local resolved,point
+      if adapter then
+        resolved,point=pcall(adapter.ForQuest,adapter,id)
+        if not resolved or not plain(point) or type(point)~='table' then point=nil end
+      elseif getIndex and getInfo and getNext then
+        local indexed,index=pcall(getIndex,id)
+        if indexed and integer(index) then
+          local title,liveID,header=entryAt(index,getInfo,false)
+          if plain(liveID) and liveID==id and header==false then
+            local found,map,x,y=pcall(getNext,id)
+            if found and integer(map) and coordinate(x) and coordinate(y) then
+              point={questID=id,title=title,mapID=map,x=x,y=y,
+                source='game-next-waypoint',projected=false}
+            end
+          end
+        end
+      end
+      if not point and adapter then
+        local candidates={}
+        if integer(savedMap) then candidates[#candidates+1]=savedMap end
+        for _,map in ipairs(maps) do if map~=savedMap then candidates[#candidates+1]=map end end
+        for _,map in ipairs(candidates) do
+          resolved,point=pcall(adapter.ForQuest,adapter,id,map)
+          if resolved and plain(point) and type(point)=='table' then break end
+          point=nil
+        end
+      end
+      if point and integer(point.mapID) and coordinate(point.x) and coordinate(point.y) then
+        result[#result+1]=point
+      end
+    end
+  end
+  return result
+end
+
 function quests:Add(questID, mapID)
-  if not integer(questID) or not integer(mapID) then
-    return nil, "Specify a valid quest ID and map ID."
+  if not integer(questID) or (mapID ~= nil and not integer(mapID)) then
+    return nil, "Specify a valid quest ID and optional map ID."
+  end
+  if not addon.errands or type(addon.errands.All) ~= "function" or
+      type(addon.errands.Add) ~= "function" then return nil, "Quest queue unavailable." end
+  local allOK, errands = pcall(addon.errands.All, addon.errands)
+  if not allOK or not plain(errands) or type(errands) ~= "table" then
+    return nil, "Quest queue unavailable."
+  end
+  for _, item in ipairs(errands) do
+    if plain(item) and type(item) == "table" then
+      local ok, id = pcall(function() return item.questID end)
+      if ok and plain(id) and id == questID then return nil, "Quest already in errands." end
+    end
+  end
+  -- Re-read the character log at click time; a zone header supplies no map ID.
+  -- Its own native waypoint may exist even when the optional POI adapter does not.
+  local groups = self:ZoneInventory()
+  local live
+  for _, group in ipairs(groups) do
+    for _, row in ipairs(group.quests) do
+      if row.questID == questID then live = row; break end
+    end
+    if live then break end
   end
   self:Invalidate() -- The native POI may have moved before its update event arrives.
   local selected
-  for _, item in ipairs(self:OnMap(mapID)) do
-    if item.questID == questID then selected = item; break end
+  if mapID then
+    for _, item in ipairs(self:OnMap(mapID)) do
+      if item.questID == questID then selected = item; break end
+    end
+    if not selected and addon.questWaypoints and
+        type(addon.questWaypoints.ForQuest) == "function" then
+      local ok, point = pcall(addon.questWaypoints.ForQuest, addon.questWaypoints, questID, mapID)
+      if ok then selected = point end
+    end
   end
-  if not selected and addon.questWaypoints then
-    selected = addon.questWaypoints:ForQuest(questID, mapID)
+  if not selected and live and live.hasLocation and
+      (mapID == nil or mapID == live.mapID) then selected = live end
+  if not selected and not mapID and live and addon.questWaypoints and
+      type(addon.questWaypoints.ForQuest) == "function" then
+    local candidates, seen = {}, {}
+    local function consider(value)
+      if integer(value) and not seen[value] then
+        seen[value]=true; candidates[#candidates+1]=value
+      end
+    end
+    if plain(C_Map) and type(C_Map)=="table" then
+      local safe, getMap=pcall(function() return C_Map.GetBestMapForUnit end)
+      if safe and plain(getMap) and type(getMap)=="function" then
+        local found, currentMap=pcall(getMap,"player")
+        if found then consider(currentMap) end
+      end
+    end
+    local getPOIMap=logMethod("GetMapForQuestPOIs")
+    if getPOIMap then
+      local found, poiMap=pcall(getPOIMap)
+      if found then consider(poiMap) end
+    end
+    for _, candidate in ipairs(candidates) do
+      local resolved, point=pcall(addon.questWaypoints.ForQuest,
+        addon.questWaypoints, questID, candidate)
+      if resolved and plain(point) and type(point)=="table" and
+          integer(point.mapID) and coordinate(point.x) and coordinate(point.y) then
+        selected=point; break
+      end
+    end
   end
-  if not selected then return nil, "No active quest POI or next waypoint on that map." end
-  for _, item in ipairs(addon.errands:All()) do
-    if item.questID == questID then return nil, "Quest already in errands." end
+  if not selected and not live then return nil, "Quest is no longer in the active log." end
+  if mapID and not selected then
+    return nil, "No active quest POI or next waypoint on that map."
   end
+  local title = live and live.title or selected.title
+  if not logText(title) then return nil, "Quest title unavailable." end
+  local located = selected and integer(selected.mapID) and
+    coordinate(selected.x) and coordinate(selected.y)
+  local ending=math.min(#title,80)
+  while ending>0 and title:byte(ending+1) and
+      title:byte(ending+1)>=128 and title:byte(ending+1)<192 do ending=ending-1 end
   local ok, added = pcall(addon.errands.Add, addon.errands, {
-    name=selected.title, category="Quest", origin="manual", scope="character",
-    questID=questID, mapID=mapID, x=selected.x, y=selected.y,
+    name=title:sub(1, ending), category="Quest", origin="manual", scope="character",
+    questID=questID, mapID=located and selected.mapID or nil,
+    x=located and selected.x or nil, y=located and selected.y or nil,
   })
-  if not ok then return nil, "Could not add quest errand." end
+  if not ok or not added then return nil, "Could not add quest errand." end
   self:Invalidate()
-  return added
+  return added, located and nil or "deferred"
 end

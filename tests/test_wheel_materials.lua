@@ -1,5 +1,6 @@
 local f=dofile('tests/wheel_fixture.lua')()
 local w=f.wheel
+f:legacyLayout()
 f:root()
 local function same(a,b)
  for i=1,3 do assert(math.abs(a[i]-b[i])<.0001,'branch colors must match') end

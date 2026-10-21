@@ -16,7 +16,10 @@ for _,view in ipairs({{800,600,.7},{5120,1440,1},{1024,768,1.5},{600,900,1}}) do
    local hit,depth=g.hit(model,model.x+math.cos(angle)*r,model.y+math.sin(angle)*r)
    assert(hit==index and depth==level,'entire sector must hit')
    local ix,iy=g.icon(tier,index)
-   assert(near(ix,math.cos(angle)*tier.radius) and near(iy,math.sin(angle)*tier.radius),'icon lies at tier midpoint')
+   assert(tier.iconRadius<tier.radius and tier.radius-tier.iconRadius<=5*.5+.001,
+     'icon shifts slightly inward while tier midpoint stays the wedge anchor')
+   assert(near(ix,math.cos(angle)*tier.iconRadius) and
+     near(iy,math.sin(angle)*tier.iconRadius),'icon lies on inward icon radius')
    local rx,ry=g.rim(tier,index)
    assert(near(math.sqrt(rx*rx+ry*ry),tier.outerRadius),'ornament anchored to rim')
   end
@@ -67,5 +70,39 @@ for _,counts in ipairs({{11,6,13},{24,24,24},{3,3,3}}) do
    end
   end
  end
+end
+-- The larger square backlight must leave border clearance at every corner.
+for _,counts in ipairs({{11,6,13},{24,24,24},{3,3,3},{32,32,32}}) do
+ for _,viewport in ipairs({{1200,800},{440,320},{900,1600}}) do
+  for _,scale in ipairs({.5,1,1.5}) do
+   local model=g.layout(counts,{4,4},80,72,scale,viewport[1],viewport[2],200,150)
+   for level,t in ipairs(model.tiers) do
+    assert(t.glowSize>=t.iconSize*1.24,'backlight must extend beyond icon')
+    for i,a in ipairs(t.angles) do
+     local cx,cy=g.icon(t,i)
+     for _,dx in ipairs({-.5,.5}) do
+      for _,dy in ipairs({-.5,.5}) do
+       local px,py=cx+dx*t.glowSize,cy+dy*t.glowSize
+       local radius=math.sqrt(px*px+py*py)
+       local direction=math.atan2(py,px)
+       local delta=math.acos(math.cos(direction-a))
+       assert(radius>=t.innerRadius+t.borderInset-.001 and
+         radius<=t.outerRadius-t.borderInset+.001 and
+         delta<=t.sweep/(2*t.count)-t.borderInset/t.radius+.001,
+         'glow square corner overlaps sector border')
+      end
+     end
+    end
+   end
+  end
+ end
+end
+-- Whole labels remain directly beneath their icons in all directions.
+local labels=g.layout({24},{},100,40,1,1600,900,800,450).tiers[1]
+for index=1,24 do
+ local x,y=g.labelPosition(labels,index)
+ local ix,iy=g.icon(labels,index)
+ assert(near(x,ix) and near(y,iy-labels.iconSize*.70),
+   'label stays below icon at slot '..index)
 end
 print('wheel geometry tests passed')

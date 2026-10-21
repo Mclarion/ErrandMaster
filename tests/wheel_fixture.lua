@@ -96,6 +96,15 @@ return function()
     self:cursor(UIParent.w/2,UIParent.h/2)
     assert(wheel:Open())
   end
+  -- Existing regression paths use an explicitly retained player layout.
+  function control:legacyLayout()
+    local categories={'Bank','Auction House','Repair','Vendor','Mailbox',
+      'Trainer','Travel','Custom','Quests','Skills','Items'}
+    local slots={}
+    for i,category in ipairs(categories) do slots[i]={type='category',category=category} end
+    addon.db.data.settings.wheelSlots=slots
+    return slots
+  end
   function control:button(label)
     for _,f in ipairs(frames) do
       if f.text==label and f.scripts.OnClick then return f end

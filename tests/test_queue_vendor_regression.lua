@@ -24,6 +24,7 @@ local plan,pending=addon.route:Plan(items,10,.1,.2,true,nil,nil,1000,1000,observ
 assert(#plan==2 and #pending==2 and plan[1].id=='near' and
   plan[1].walkStatus=='unknown-route', 'same-map unknown path still has a ranked stop')
 local visible=addon.route:DisplayOrder(plan,pending)
-assert(#visible==4 and visible[1].id=='offmap' and visible[3].id=='unknown',
-  'manual anchors cover off-map and unlocated stops in displayed order')
+assert(#visible==4 and visible[1].id=='offmap' and visible[4].id=='unknown' and
+  visible[1].canOverride==true and visible[4].canOverride==false,
+  'off-map located stop remains anchored; unknown location stays last')
 print('queue/vendor regression passed')

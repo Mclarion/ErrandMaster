@@ -4,19 +4,21 @@ local wheel = addon.radial
 local geometry = addon.wheelGeometry
 local ACTION = "ERRANDMASTER_WHEEL"
 
-local categories = {"Bank", "Auction House", "Repair", "Vendor", "Mailbox",
-  "Trainer", "Travel", "Custom", "Quests", "Skills", "Items"}
+local categories = {"Services", "Repair", "Vendor", "Trainer", "Travel",
+  "Quests", "Skills", "Items"}
 local menus = {
+  Services={"Bank", "Auction House", "Mailbox", "Profession", "Back"},
   Bank={"Personal Bank", "Guild Bank", "Back"},
   Vendor={"Food", "Reagents", "Ammo", "Profession Vendor", "General Goods", "Back"},
   ["Profession Vendor"]={"Back"},
   ["Profession Supplies"]={"Back"},
   Mailbox={"Inbox", "Back"},
-  Trainer={"Class Trainer", "Profession Trainer", "Weapon Trainer", "Back"},
+  Trainer={"Class Trainer", "Pet Trainer", "Profession Trainer", "Weapon Trainer", "Back"},
   Travel={"Flight Master", "Portal", "Boat", "Hearthstone", "Waypoint", "Favorites", "Back"},
+
   Waypoint={"Pin", "Back"},
   Favorites={"Add Coordinates", "Current Favorites", "Remove Favorite", "Back"},
-  Custom={"New Errand", "Saved Errands", "Settings", "Back"},
+
   Settings={"Edit Wheel", "AddOns Settings", "Back"},
   Quests={"Back"},
 }
@@ -27,6 +29,16 @@ local quickServices = {Repair=true, Bank=true, ["Auction House"]=true,
   ["Flight Master"]=true}
 local assetRoot = "Interface\\AddOns\\ErrandMaster\\Textures\\"
 local icon = assetRoot .. "PackLogo.blp"
+-- Build-time Glow*.blp assets; never synthesize a path for native/user icons.
+-- Keep this manifest aligned with tools/generate_wheel_icon_glow.py sources().
+local glowAssets={}
+for _, names in ipairs({
+  "ClassDeathKnight ClassDemonHunter ClassDruid ClassEvoker ClassHunter ClassMage ClassMonk ClassPaladin ClassPriest ClassRogue ClassShaman ClassWarlock ClassWarrior",
+  "PackAlchemy PackAlchemyTrainer PackAlchemyVendor PackAmmo PackAuctionHouse PackBack PackBank PackBlacksmith PackBlacksmithingTrainer PackBlacksmithingVendor PackBoat PackClassTrainer PackCookingTrainer PackCookingVendor PackCross PackEnchantmentTrainer PackEnchantmentVendor PackEngineeringTrainer PackEngineeringVendor PackFavourites PackFirstAidTrainer PackFirstAidVendor PackFishing PackFishingTrainer PackFishingVendor PackFlightMaster PackFood PackGeneral PackGuild PackHearthstone PackHerbalism PackHerbalismTrainer PackHerbalismVendor PackLeatherworkingTrainer PackLeatherworkingVendor PackMailbox PackMiningTrainer PackMiningVendor PackPadlockLocked PackPadlockUnlocked PackPortal PackProfessionTrainer PackProfessionVendor PackQuestionQuestmark PackQuestmark PackReagents PackRepair PackSettings PackTailoringTrainer PackTailoringVendor PackTravel PackWaypoint",
+  "ServiceAuction ServiceBoat ServiceCustom ServiceFavorites ServiceFlight ServiceHearthstone ServiceItems ServiceLock ServiceMail ServicePortal ServiceQuests ServiceRepair ServiceSkills ServiceTrainer ServiceTravel ServiceUnlock ServiceVendor"
+}) do
+  for name in names:gmatch("%S+") do glowAssets[name]=true end
+end
 local classes = {DEATHKNIGHT="Death Knight", DEMONHUNTER="Demon Hunter",
   DRUID="Druid", EVOKER="Evoker", HUNTER="Hunter", MAGE="Mage",
   MONK="Monk", PALADIN="Paladin", PRIEST="Priest", ROGUE="Rogue",
@@ -47,6 +59,13 @@ local function medallionPath(color, active)
   local artwork=medallionColors[color] or "Green"
   return assetRoot .. "Medallion" .. artwork ..
     (active and "Active" or "Inactive") .. ".blp"
+end
+local function iconGlowPath(texture, color)
+  if type(texture)=="string" then
+    local base=texture:match("^Interface\\AddOns\\ErrandMaster\\Textures\\([%w]+)%.blp$")
+    if base and glowAssets[base] then return assetRoot.."Glow"..base..".blp",true end
+  end
+  return medallionPath(color,true),false
 end
 local function colorKey(entry)
   if not entry then return end
@@ -77,8 +96,8 @@ local function entryColor(entry)
   if category:find("Trainer", 1, true) or category == "Trainer" then return "Teal" end
   if category == "Repair" then return "Red" end
   if category == "Mailbox" or category == "Inbox" then return "Amber" end
-  if category == "Auction House" then return "Violet" end
-  if category == "Travel" or category == "Quests" or category == "Flight Master" or
+  if category == "Auction House" or category == "Services" then return "Blue" end
+  if category == "Travel" or category == "Transport" or category == "Quests" or category == "Flight Master" or
       category == "Portal" or category == "Boat" or category == "Hearthstone" or
       category == "Waypoint" or category == "Pin" or category == "Select Current" then return "Gold" end
   if category == "Custom" or category == "New Errand" or category == "Saved Errands" or
@@ -130,15 +149,12 @@ local function submenuEntries()
       {type="category",category="AddOns Settings"},
       {type="category",category="Back"}}
   end
-  if selected == "Trainer" and usable(UnitClass) and type(UnitClass)=="function" then
-    local ok,_,class=pcall(UnitClass,"player")
-    if ok and class=="HUNTER" then
-      return {{type="category",category="Class Trainer"},
-        {type="category",category="Pet Trainer"},
-        {type="category",category="Profession Trainer"},
-        {type="category",category="Weapon Trainer"},
-        {type="category",category="Back"}}
-    end
+  if selected == "Trainer" then
+    return {{type="category",category="Class Trainer"},
+      {type="category",category="Pet Trainer"},
+      {type="category",category="Profession Trainer"},
+      {type="category",category="Weapon Trainer"},
+      {type="category",category="Back"}}
   end
   if selected == "Waypoint" then
     local result={{type="category",category="Pin"}}
@@ -233,10 +249,12 @@ local function submenuEntries()
     return result
   end
   if selected == "Profession Vendor" or selected == "Profession Supplies" or
-      selected == "Profession Trainer" then
+      selected == "Profession Trainer" or selected == "Profession" then
     local result, known = {}, {}
-    if type(addon.db.GetWheelProfessions) == "function" then
-      local ok, names = pcall(addon.db.GetWheelProfessions,addon.db)
+    local lookup=selected=="Profession" and addon.db.GetWheelTrainerProfessions or
+      addon.db.GetWheelProfessions
+    if type(lookup) == "function" then
+      local ok, names = pcall(lookup,addon.db)
       if ok and type(names) == "table" then known=names end
     elseif type(addon.ProfessionFilters) == "function" then
       local ok, names = pcall(addon.ProfessionFilters,addon)
@@ -253,7 +271,8 @@ local function submenuEntries()
       local name=known[i]
       if usable(name) and allowed[name] and not seen[name] then
         result[#result+1]={type="category",category=name ..
-          (selected == "Profession Trainer" and " Trainer" or " Vendor")}
+          ((selected == "Profession Trainer" or selected == "Profession") and
+            " Trainer" or " Vendor")}
         seen[name]=true
       end
     end
@@ -331,10 +350,16 @@ local function display(entry)
       return "Back", assetRoot .. "PackBack.blp"
     elseif entry.category == "Mailbox" or entry.category == "Inbox" then
       return entry.category, assetRoot .. "PackMailbox.blp"
-    elseif entry.category == "Profession Trainer" then
+    elseif entry.category == "Profession" or entry.category == "Profession Trainer" then
       return entry.category, assetRoot .. "PackProfessionTrainer.blp"
     elseif entry.category == "General Goods" then
       return entry.category, assetRoot .. "PackGeneral.blp"
+    elseif entry.category == "Food Vendor" then
+      return entry.category, assetRoot .. "PackFood.blp"
+    elseif entry.category == "Reagent Vendor" then
+      return entry.category, assetRoot .. "PackReagents.blp"
+    elseif entry.category == "Ammo Vendor" then
+      return entry.category, assetRoot .. "PackAmmo.blp"
     elseif entry.category == "Vendor" or entry.category == "Profession Vendor" or
         entry.category == "Profession Supplies" then
       return entry.category, assetRoot .. "PackProfessionVendor.blp"
@@ -348,6 +373,8 @@ local function display(entry)
       return entry.category, assetRoot .. "PackFishingVendor.blp"
     elseif entry.category == "Alchemy Trainer" then
       return entry.category, assetRoot .. "PackAlchemyTrainer.blp"
+    elseif entry.category == "Blacksmithing Vendor" then
+      return entry.category, assetRoot .. "PackBlacksmithingVendor.blp"
     elseif entry.category == "Alchemy Vendor" then
       return entry.category, assetRoot .. "PackAlchemyVendor.blp"
     elseif entry.category == "Cooking Vendor" then
@@ -387,6 +414,9 @@ local function display(entry)
       return entry.category, assetRoot .. "PackProfessionTrainer.blp"
     elseif entry.category == "Travel" then
       return entry.category, assetRoot .. "PackTravel.blp"
+
+    elseif entry.category == "Services" then
+      return entry.category, assetRoot .. "PackBank.blp"
     elseif entry.category == "Flight Master" then
       return entry.category, assetRoot .. "PackFlightMaster.blp"
     elseif entry.category == "Portal" then
@@ -561,6 +591,48 @@ local function wheelLabel(name)
   if type(name) ~= "string" then return "" end
   return (name:match("^[^\n]+") or ""):gsub("|", "/")
 end
+local function compactLabel(entry, name)
+  local label=wheelLabel(name)
+  if label=="" then return "Empty" end
+  if entry and entry.type=="category" then
+    local category=entry.category
+    if wheel.submenu=="Profession Vendor" or wheel.submenu=="Profession Supplies" then
+      label=category:match("^(.-) Vendor$") or label
+    elseif wheel.submenu=="Profession Trainer" or wheel.submenu=="Profession" then
+      label=category:match("^(.-) Trainer$") or label
+      label=({Blacksmithing="Blacksmith",Leatherworking="Leatherwork",
+        Engineering="Engineer",Enchanting="Enchant"})[label] or label
+    end
+  end
+  return label
+end
+local function drawSlotLabel(slot, tier, index, name, centerX, centerY)
+  local label=slot.label
+  local sectorWidth=tier.radius*tier.sweep/math.max(1,tier.count)
+  -- One whole upright line, bounded by a dense sector's horizontal gutter.
+  local maxLetters=math.max(3,math.min(12,math.floor((sectorWidth-5.5)/5.5)))
+  local chars={}
+  for char in name:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+    if #chars==maxLetters then break end
+    chars[#chars+1]=char
+  end
+  local rendered=table.concat(chars)
+  if #chars==maxLetters and #name>#rendered then chars[#chars]="…" end
+  for _,glyph in ipairs(slot.labelGlyphs or {}) do glyph:Hide() end
+  local first,second=name:match("^([^ ]+) ([^ ]+)$")
+  local double=first and #first<=maxLetters and #second<=maxLetters and
+    tier.count<=12
+  label:SetText(double and (first.."\n"..second) or table.concat(chars))
+  label:SetWidth(maxLetters*5.5+2)
+  label:SetHeight(double and 21 or 11)
+  label:SetWordWrap(false)
+  label:SetNonSpaceWrap(false)
+  label:SetJustifyH("CENTER")
+  local x,y=geometry.labelPosition(tier,index)
+  label:ClearAllPoints()
+  label:SetPoint("CENTER",UIParent,"BOTTOMLEFT",centerX+x,centerY+y-(double and 5 or 0))
+  label:Show()
+end
 
 -- Every tier shares a center. Two choices occupy one quarter of a circle;
 -- larger lists grow around their selected parent without making another wheel.
@@ -575,7 +647,7 @@ local function tierAngle(tier, index)
 end
 
 local function slotPositions(tier,angle)
-  local x,y=math.cos(angle)*tier.radius,math.sin(angle)*tier.radius
+  local x,y=math.cos(angle)*tier.iconRadius,math.sin(angle)*tier.iconRadius
   return x,y,x,y,tier.iconSize
 end
 
@@ -626,7 +698,7 @@ function wheel:Enter(menu, index, folder)
   for i=1,self.count do
     local entry = entryAt(i)
     local name, texture = entryVisual(entry)
-    parent.entries[i] = {name=wheelLabel(name), texture=texture,
+    parent.entries[i] = {name=compactLabel(entry,name), texture=texture,
       color=swatchRGB[entryColor(entry)] or swatchRGB.Slate,
       medallionColor=entryColor(entry)}
   end
@@ -679,14 +751,18 @@ function wheel:RenderHistory()
   for depth, parent in ipairs(self.history) do
     local view = self.historyViews[depth]
     if not view then
-      view = {icons={}, iconGlows={}, medallionGlows={}, labels={}, sectors={}, borders={}, medallions={},
-        shadows={},reliefs={},halos={}}
+      view = {icons={}, iconGlows={}, iconShadows={}, rimShadows={}, rimBases={},
+        medallionGlows={}, labels={}, sectors={}, borders={}, medallions={},
+        shadows={},reliefs={},halos={},labelGlyphs={}}
       self.historyViews[depth] = view
     end
     local tier = self.tiers[depth]
     for i, item in ipairs(parent.entries) do
       if not view.icons[i] then
         view.icons[i] = self.frame:CreateTexture(nil,"ARTWORK",nil,1)
+        view.iconShadows[i] = self.frame:CreateTexture(nil,"BACKGROUND",nil,2)
+        view.rimBases[i] = self.frame:CreateTexture(nil,"BACKGROUND",nil,-4)
+        view.rimShadows[i] = self.frame:CreateTexture(nil,"BACKGROUND",nil,-3)
         view.iconGlows[i] = self.frame:CreateTexture(nil,"BORDER",nil,2)
         view.iconGlows[i]:SetBlendMode("ADD")
         view.medallionGlows[i] = self.frame:CreateTexture(nil,"BORDER",nil,3)
@@ -702,6 +778,26 @@ function wheel:RenderHistory()
       end
       local angle = tier.angles[i]
       local ix,iy,lx,ly,width=slotPositions(tier,angle)
+      local base=view.rimBases[i]
+      base:SetTexture(assetRoot..string.format("WheelSilhouetteT%dN%02d.blp",
+        math.min(depth-1,2),depth==1 and 1 or tier.count))
+      base:ClearAllPoints()
+      base:SetPoint("CENTER",UIParent,"BOTTOMLEFT",self.centerX,self.centerY-9*self.artFit)
+      base:SetVertexColor(.008,.012,.018);base:SetAlpha(1)
+      if i==1 and rotateArt(base,geometry.artDiameter(tier.outerRadius)*1.065,
+          tier.centerAngle-math.pi/2) then
+        base:Show()
+      else base:Hide() end
+      local rim=view.rimShadows[i]
+      rim:SetTexture(assetRoot..string.format("WheelSilhouetteT%dN%02d.blp",
+        math.min(depth-1,2),depth==1 and 1 or tier.count))
+      rim:ClearAllPoints()
+      rim:SetPoint("CENTER",UIParent,"BOTTOMLEFT",self.centerX,self.centerY-6*self.artFit)
+      rim:SetVertexColor(.065,.075,.09);rim:SetAlpha(1)
+      if i==1 and rotateArt(rim,geometry.artDiameter(tier.outerRadius)*1.035,
+          tier.centerAngle-math.pi/2) then
+        rim:Show()
+      else rim:Hide() end
       for _, layer in ipairs({{view.shadows[i],"Shadow"},{view.sectors[i],"Pattern"},
           {view.reliefs[i],"Relief"},{view.borders[i],"Border"},{view.halos[i],"Halo"}}) do
         local region, kind = layer[1], layer[2]
@@ -733,7 +829,8 @@ function wheel:RenderHistory()
       local jewelGlow=view.medallionGlows[i]
       jewelGlow:SetTexture(medallionPath(item.medallionColor,true))
       placeMedallion(jewelGlow,tier,angle,self.centerX,self.centerY,self.artFit)
-      jewelGlow:SetAlpha(i==parent.selected and .38 or .12)
+      jewelGlow:SetAlpha(i==parent.selected and .58 or .20)
+      if item.name=="Back" then medallion:Hide();jewelGlow:Hide() end
       local image = view.icons[i]
       image:SetTexture(item.texture)
       image:SetTexCoord(0,1,0,1)
@@ -744,18 +841,32 @@ function wheel:RenderHistory()
       image:SetDesaturated(false)
       image:SetAlpha(1); image:Show()
       local light=view.iconGlows[i]
-      light:SetTexture(medallionPath(item.medallionColor,true))
-      light:SetSize(tier.iconSize*1.5,tier.iconSize*1.5)
+      local glowPath,shaped=iconGlowPath(item.texture,item.medallionColor)
+      local iconShade=view.iconShadows[i]
+      iconShade:SetTexture(glowPath)
+      iconShade:SetTexCoord(0,1,0,1)
+      iconShade:SetSize(tier.iconSize*1.24,tier.iconSize*1.24)
+      iconShade:ClearAllPoints()
+      iconShade:SetPoint("CENTER",UIParent,"BOTTOMLEFT",self.centerX+ix+2,self.centerY+iy-3)
+      iconShade:SetVertexColor(.015,.02,.025);iconShade:SetAlpha(.92);iconShade:Show()
+      light:SetTexture(glowPath)
+      light:SetTexCoord(0,1,0,1)
+      light:SetSize(shaped and tier.iconSize or tier.glowSize,
+        shaped and tier.iconSize or tier.glowSize)
       light:ClearAllPoints()
       light:SetPoint("CENTER",UIParent,"BOTTOMLEFT",self.centerX+ix,self.centerY+iy)
-      light:SetAlpha(i==parent.selected and .34 or .10)
+      light:SetAlpha(i==parent.selected and (shaped and .90 or .64) or
+        (shaped and .52 or .24))
       light:Show()
-      local label=view.labels[i]
-      label:Hide()
+      local holder={label=view.labels[i],labelGlyphs=view.labelGlyphs[i]}
+      drawSlotLabel(holder,tier,i,item.name,self.centerX,self.centerY)
+      view.labelGlyphs[i]=holder.labelGlyphs
     end
     for i=#parent.entries+1,#view.icons do
       view.icons[i]:Hide(); view.labels[i]:Hide()
+      for _,glyph in ipairs(view.labelGlyphs[i] or {}) do glyph:Hide() end
       view.iconGlows[i]:Hide(); view.medallionGlows[i]:Hide()
+      view.iconShadows[i]:Hide();view.rimShadows[i]:Hide();view.rimBases[i]:Hide()
       view.sectors[i]:Hide(); view.borders[i]:Hide()
       view.medallions[i]:Hide()
       view.shadows[i]:Hide();view.reliefs[i]:Hide();view.halos[i]:Hide()
@@ -766,8 +877,14 @@ function wheel:RenderHistory()
     view.shadowTint=0
     for _, image in ipairs(view.icons) do image:Hide() end
     for _, image in ipairs(view.iconGlows) do image:Hide() end
+    for _, image in ipairs(view.iconShadows) do image:Hide() end
+    for _, image in ipairs(view.rimShadows) do image:Hide() end
+    for _, image in ipairs(view.rimBases) do image:Hide() end
     for _, image in ipairs(view.medallionGlows) do image:Hide() end
     for _, label in ipairs(view.labels) do label:Hide() end
+    for _, letters in ipairs(view.labelGlyphs) do
+      for _,glyph in ipairs(letters) do glyph:Hide() end
+    end
     for _, region in ipairs(view.sectors) do region:Hide() end
     for _, region in ipairs(view.borders) do region:Hide() end
     for _, region in ipairs(view.medallions) do region:Hide() end
@@ -1064,8 +1181,9 @@ function wheel:Create()
         slot.sector:SetAlpha(.94+alpha*.06)
       end
       slot.borderGlow:SetAlpha(alpha*.85*shimmer)
-      slot.iconGlow:SetAlpha(.10+alpha*.22*shimmer)
-      slot.medallionGlow:SetAlpha(.10+alpha*.28*shimmer)
+      slot.iconGlow:SetAlpha((slot.iconGlowShaped and .52 or .24)+
+        alpha*(slot.iconGlowShaped and .38 or .44)*shimmer)
+      slot.medallionGlow:SetAlpha(.20+alpha*.44*shimmer)
       local shade=slot.shadowTint or 0
       local desired=slot.shadowTarget or 0
       shade=shade+(desired-shade)*math.min(1,(elapsed or .016)*7)
@@ -1122,18 +1240,11 @@ function wheel:Create()
         if selectedEntry then wheel:SelectCategory(selectedEntry.category) end
         return
       end
-      if mouse=="LeftButton" and wheel.submenu=="Custom" and index then
-        local selectedEntry=entryAt(index)
-        if selectedEntry and selectedEntry.category=="Settings" then
-          wheel:Enter("Settings",index)
-          return
-        end
-      end
       if mouse == "LeftButton" and index and not wheel.submenu then
         local selectedEntry = entryAt(index)
         local category = selectedEntry and selectedEntry.type == "category" and
           selectedEntry.category
-        if category == "Skills" or category == "Items" or category == "Custom" or
+        if category == "Skills" or category == "Items" or
             category == "Settings" then
           wheel:Enter(category, index)
           return
@@ -1168,7 +1279,8 @@ function wheel:Create()
             wheel:Notice("Quest log inventory unavailable or incomplete; some zones may be missing.")
           end
           return
-        elseif (category=="Settings" and wheel.submenu=="Custom") or
+        elseif (category=="Bank" or category=="Profession") and
+            wheel.submenu=="Services" or
             ((category == "Profession Vendor" or category == "Profession Supplies") and
             wheel.submenu == "Vendor") or
             (category == "Profession Trainer" and wheel.submenu == "Trainer") then
@@ -1223,24 +1335,28 @@ function wheel:Create()
           end
         end
         if not active then
+          wheel:Layout();wheel:RefreshAppearance()
           wheel:Notice("Quest is no longer in this zone's log; reopen Quests.")
-          wheel:Layout();wheel:RefreshAppearance();return
+          return
         end
         local map,x,y=active.mapID,active.x,active.y
         if active.hasLocation~=true or not usable(map) or type(map)~="number" or
             map<1 or map>1000000000 or map%1~=0 or
             not usable(x) or type(x)~="number" or x~=x or x<0 or x>1 or
             not usable(y) or type(y)~="number" or y~=y or y<0 or y>1 then
-          wheel:Notice("Quest location unavailable; open the quest log or map for guidance.")
-          return
+          map=nil -- Queue an unlocated quest, not a guessed zone/player position.
         end
-        if not settings.wheelUnlocked then wheel:Close() end
-        local add=apiMethod(addon.quests,"Add")
+        local add=addon.quests and apiMethod(addon.quests,"Add")
         local addedOK,added,reason=false,nil,nil
         if add then addedOK,added,reason=pcall(add,addon.quests,entry.id,map) end
         if addedOK and added then
-          addon:Refresh(); addon:Print("Queued active quest: " .. entry.name .. ".")
-        else addon:Print(type(reason)=="string" and reason or "Quest waypoint unavailable.") end
+          if not settings.wheelUnlocked then wheel:Close() end
+          addon:Refresh()
+          if reason=="deferred" then
+            addon:Print("Queued active quest: " .. entry.name ..
+              "; no verified location yet. Route deferred; use the quest log or map for guidance.")
+          else addon:Print("Queued active quest: " .. entry.name .. ".") end
+        else wheel:Notice(type(reason)=="string" and reason or "Quest queue unavailable.") end
       elseif entry.type == "favorite" then
         if not settings.wheelUnlocked then wheel:Close() end
         local ok, selected=pcall(addon.ActivateTarget,addon,entry.id)
@@ -1334,6 +1450,7 @@ function wheel:Create()
   local center = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   center:SetText("Wheel")
   self.centerLabel = center
+
   local centerClose = CreateFrame("Button", nil, frame)
   centerClose:EnableMouse(true)
   centerClose:RegisterForClicks("LeftButtonUp", "RightButtonUp")
@@ -1390,7 +1507,7 @@ function wheel:Create()
 
   self.closeButton = tool("Close", function() wheel:Close() end)
   local addMenu=CreateFrame("Frame", nil, frame)
-  addMenu:SetSize(112,105)
+  addMenu:SetSize(112,115)
   addMenu:SetFrameStrata("TOOLTIP")
   self.addMenu=addMenu
   self.addButton=tool("+ Add",function() wheel:ShowAddMenu() end)
@@ -1410,6 +1527,7 @@ function wheel:Create()
   end)
   addAction("+ Entry",-29,function() wheel:ShowSettings() end)
   addAction("Icon / Edit",-56,function() wheel:ShowSettings() end)
+
   addMenu:Hide()
   local outside=CreateFrame("Button",nil,UIParent)
   outside:SetAllPoints(UIParent)
@@ -1427,8 +1545,11 @@ end
 function wheel:EnsureSlots(count)
   local frame = self.frame
   for i = #self.slots+1, count do
+    local rimBase=frame:CreateTexture(nil,"BACKGROUND",nil,-4)
+    local rimShadow=frame:CreateTexture(nil,"BACKGROUND",nil,-3)
     local shadow = frame:CreateTexture(nil, "BACKGROUND",nil,0)
     local sector = frame:CreateTexture(nil, "BACKGROUND",nil,1)
+    local iconShadow=frame:CreateTexture(nil,"BACKGROUND",nil,2)
     local relief = frame:CreateTexture(nil, "BORDER",nil,0)
     local glow = frame:CreateTexture(nil, "BORDER",nil,1)
     local iconGlow = frame:CreateTexture(nil, "BORDER",nil,2)
@@ -1448,13 +1569,17 @@ function wheel:EnsureSlots(count)
     local text = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     local badge = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     badge:SetPoint("TOPRIGHT", texture, "TOPRIGHT", 4, 4)
-    self.slots[i] = {shadow=shadow,relief=relief,sector=sector, glow=glow,
+    self.slots[i] = {shadow=shadow,rimBase=rimBase,
+      rimShadow=rimShadow,iconShadow=iconShadow,
+      relief=relief,sector=sector, glow=glow,
       iconGlow=iconGlow,medallionGlow=medallionGlow,medallion=medallion,
       activeMedallion=activeMedallion,borderGlow=borderGlow,glowAlpha=0,
       texture=texture, label=text, badge=badge}
   end
   for i = count+1, #self.slots do
     self.slots[i].shadow:Hide()
+    self.slots[i].rimShadow:Hide();self.slots[i].rimBase:Hide()
+    self.slots[i].iconShadow:Hide()
     self.slots[i].iconGlow:Hide()
     self.slots[i].medallionGlow:Hide()
     self.slots[i].relief:Hide()
@@ -1465,6 +1590,7 @@ function wheel:EnsureSlots(count)
     self.slots[i].borderGlow:Hide()
     self.slots[i].texture:Hide()
     self.slots[i].label:Hide()
+    for _,glyph in ipairs(self.slots[i].labelGlyphs or {}) do glyph:Hide() end
     self.slots[i].badge:Hide()
   end
 end
@@ -1531,7 +1657,13 @@ function wheel:SelectCategory(category)
   elseif category == "Active Quests" then
     addon.ui:OpenCategory("Quest"); return
   elseif category == "Portal" or category == "Boat" then
-    addon:Print(category .. " routes need verified destination data; no route was queued."); return
+    if not addon.travelPoints or type(addon.travelPoints.QueueService)~="function" then
+      addon:Print(category .. " service unavailable; no destination was invented.")
+      return
+    end
+    local ok, task, message=pcall(addon.travelPoints.QueueService,addon.travelPoints,category)
+    addon:Print(ok and message or "Could not queue "..category.." service request.")
+    return
   elseif category == "Hearthstone" then
     addon:Print("Hearthstone use needs an in-client secure action; the wheel does not cast items."); return
   end
@@ -1685,6 +1817,7 @@ function wheel:Layout()
   end
   self.addButton:ClearAllPoints()
   self.addButton:SetPoint("CENTER",UIParent,"BOTTOMLEFT",self.centerX+rootOuter*.7,self.centerY+rootOuter*.7)
+
   if settings.wheelUnlocked and not self.submenu then self.addButton:Show()
   else self.addButton:Hide(); self.addMenu:Hide() end
   self.addMenu:ClearAllPoints()
@@ -1713,8 +1846,7 @@ function wheel:Layout()
       local preview=previewCache[category]
       if preview then self.previews[i]=preview end
     end
-    slot.label:SetText(wheelLabel(name))
-    slot.label:Hide()
+    drawSlotLabel(slot,active,i,compactLabel(entry,name),self.centerX,self.centerY)
     local ix,iy=geometry.icon(active,i)
     slot.texture:SetTexture(texture)
     slot.texture:SetDesaturated(false)
@@ -1727,20 +1859,51 @@ function wheel:Layout()
     slot.sector:SetTexture(art)
     slot.glow:SetTexture(glow)
     slot.medallion:SetTexture(medallionPath(entryColor(entry),false))
-    slot.iconGlow:SetTexture(medallionPath(entryColor(entry),true))
-    slot.iconGlow:SetSize(active.iconSize*1.5,active.iconSize*1.5)
+    local iconGlowPath,shaped=iconGlowPath(texture,entryColor(entry))
+    slot.iconShadow:SetTexture(iconGlowPath)
+    slot.iconShadow:SetTexCoord(0,1,0,1)
+    slot.iconShadow:SetSize(active.iconSize*1.24,active.iconSize*1.24)
+    slot.iconShadow:ClearAllPoints()
+    slot.iconShadow:SetPoint("CENTER",UIParent,"BOTTOMLEFT",
+      self.centerX+ix+2,self.centerY+iy-3)
+    slot.iconShadow:SetVertexColor(.015,.02,.025)
+    slot.iconShadow:SetAlpha(.92);slot.iconShadow:Show()
+    slot.iconGlowShaped=shaped
+    slot.iconGlow:SetTexture(iconGlowPath)
+    slot.iconGlow:SetTexCoord(0,1,0,1)
+    slot.iconGlow:SetSize(shaped and active.iconSize or active.glowSize,
+      shaped and active.iconSize or active.glowSize)
     slot.iconGlow:ClearAllPoints()
     slot.iconGlow:SetPoint("CENTER",UIParent,"BOTTOMLEFT",self.centerX+ix,self.centerY+iy)
-    slot.iconGlow:SetAlpha(.10);slot.iconGlow:Show()
+    slot.iconGlow:SetAlpha(shaped and .52 or .24);slot.iconGlow:Show()
     slot.medallionGlow:SetTexture(medallionPath(entryColor(entry),true))
     placeMedallion(slot.medallionGlow,active,angle,self.centerX,self.centerY,fit)
-    slot.medallionGlow:SetAlpha(.10)
+    slot.medallionGlow:SetAlpha(.20)
     slot.activeMedallion:SetTexture(medallionPath(entryColor(entry),true))
     slot.medallion:SetDesaturated(entryColor(entry)=="White")
     slot.activeMedallion:SetDesaturated(entryColor(entry)=="White")
     placeMedallion(slot.medallion,active,angle,self.centerX,self.centerY,fit)
     placeMedallion(slot.activeMedallion,active,angle,self.centerX,self.centerY,fit)
+    if entry.type=="category" and entry.category=="Back" then
+      slot.medallion:Hide();slot.medallionGlow:Hide();slot.activeMedallion:Hide()
+    end
     slot.shadow:SetTexture(assetRoot..string.format("WheelShadowT%dN%02d.blp",tierAsset,count))
+    slot.rimBase:SetTexture(assetRoot..string.format("WheelSilhouetteT%dN%02d.blp",
+      tierAsset,depth==1 and 1 or count))
+    slot.rimBase:ClearAllPoints()
+    slot.rimBase:SetPoint("CENTER",UIParent,"BOTTOMLEFT",self.centerX,self.centerY-9*fit)
+    slot.rimBase:SetVertexColor(.008,.012,.018);slot.rimBase:SetAlpha(1)
+    if i==1 and rotateArt(slot.rimBase,geometry.artDiameter(outerRadius)*1.065,
+        active.centerAngle-math.pi/2) then slot.rimBase:Show()
+    else slot.rimBase:Hide() end
+    slot.rimShadow:SetTexture(assetRoot..string.format("WheelSilhouetteT%dN%02d.blp",
+      tierAsset,depth==1 and 1 or count))
+    slot.rimShadow:ClearAllPoints()
+    slot.rimShadow:SetPoint("CENTER",UIParent,"BOTTOMLEFT",self.centerX,self.centerY-6*fit)
+    slot.rimShadow:SetVertexColor(.065,.075,.09);slot.rimShadow:SetAlpha(1)
+    if i==1 and rotateArt(slot.rimShadow,geometry.artDiameter(outerRadius)*1.035,
+        active.centerAngle-math.pi/2) then slot.rimShadow:Show()
+    else slot.rimShadow:Hide() end
     slot.relief:SetTexture(assetRoot..string.format("WheelReliefT%dN%02d.blp",tierAsset,count))
     slot.borderGlow:SetTexture(assetRoot..string.format("WheelHaloT%dN%02d.blp",tierAsset,count))
     slot.shadow:SetAlpha(.72);slot.relief:SetAlpha(.30)
@@ -1758,13 +1921,14 @@ function wheel:Layout()
     slot.texture:ClearAllPoints()
     slot.texture:SetPoint("CENTER", UIParent, "BOTTOMLEFT",
       self.centerX + ix,self.centerY + iy)
-    slot.label:Hide()
+
   end
   if not artSupported then
     -- Unknown client texture rotation: keep the usable icon wheel, not piled-up pie art.
     for i = 1, count do
       self.slots[i].sector:Hide(); self.slots[i].glow:Hide()
       self.slots[i].shadow:Hide();self.slots[i].relief:Hide()
+      self.slots[i].rimShadow:Hide();self.slots[i].rimBase:Hide()
       self.slots[i].borderGlow:Hide()
     end
   end
@@ -1778,6 +1942,18 @@ end
 function wheel:SetSelection(index)
   if self.selected == index then return end
   self.selected = index
+  -- One silhouette spans root, active ring and any expanded parent rings.
+  -- All perimeter segments share the hovered wedge's color.
+  local hovered=index and index>0 and
+    (swatchRGB[entryColor(previewEntryAt(index))] or swatchRGB.Slate)
+  local tint=hovered and {hovered[1]*.66+.06,hovered[2]*.66+.06,
+    hovered[3]*.66+.06} or {.065,.075,.09}
+  for _,slot in ipairs(self.slots) do
+    if slot.rimShadow then slot.rimShadow:SetVertexColor(unpack(tint)) end
+  end
+  for _,view in ipairs(self.historyViews) do
+    for _,rim in ipairs(view.rimShadows) do rim:SetVertexColor(unpack(tint)) end
+  end
   for i = 1, self.count or 0 do
     local slot = self.slots[i]
     local color = swatchRGB[entryColor(previewEntryAt(i))] or swatchRGB.Slate
@@ -1854,8 +2030,8 @@ function wheel:ResetMaterials()
     slot.glowAlpha,slot.glowTarget=0,0
     slot.shadowTint,slot.shadowTarget=0,0
     slot.shadow:SetVertexColor(0,0,0)
-    slot.iconGlow:SetAlpha(.10)
-    slot.medallionGlow:SetAlpha(.10)
+    slot.iconGlow:SetAlpha(slot.iconGlowShaped and .52 or .24)
+    slot.medallionGlow:SetAlpha(.20)
     slot.activeMedallion:SetAlpha(0)
     slot.borderGlow:SetAlpha(0)
     slot.relief:SetAlpha(.30)

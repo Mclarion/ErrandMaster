@@ -50,6 +50,34 @@ function travel:AddFavorite(raw)
   refresh()
   return item
 end
+function travel:QueueService(category)
+  if category~="Portal" and category~="Boat" then
+    return nil,"Unsupported travel service."
+  end
+  if not addon.errands or type(addon.errands.All)~="function" or
+      type(addon.errands.Add)~="function" then return nil,"Travel queue unavailable." end
+  local ok, all=pcall(addon.errands.All,addon.errands)
+  if not ok or not plain(all) or type(all)~="table" then
+    return nil,"Travel queue unavailable."
+  end
+  for _,item in ipairs(all) do
+    local read, kind, origin, completed, name=pcall(function()
+      return item.category,item.origin,item.completed,item.name
+    end)
+    if read and plain(kind) and plain(origin) and plain(completed) and
+        plain(name) and kind==category and origin=="suggested" and completed~=true then
+      return nil,"Already queued: "..category.." service request."
+    end
+  end
+  -- Intent only. The NPC catalog currently has no verified Boat/Portal category;
+  -- a later provider may resolve one, but a guessed map pin must never be saved.
+  local saved, item=pcall(addon.errands.Add,addon.errands,
+    {name=category.." service request",category=category,origin="suggested",scope="character"})
+  if not saved or not item then return nil,"Could not queue "..category.."." end
+  refresh()
+  return item,"Queued "..category.." service request; destination unverified. "..
+    "Route deferred until provider evidence is available."
+end
 function travel:Favorites()
   local items={}
   if not addon.errands or type(addon.errands.All)~="function" then return items end

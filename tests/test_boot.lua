@@ -1,11 +1,22 @@
 local addon = {}
 local function loadModule(path) assert(loadfile(path))("ErrandMaster", addon) end
+local textures={}
 local function fakeFrame()
   local f = {scripts={}, shown=true, text=""}
   setmetatable(f, {__index=function(_, key)
-    if key == "CreateFontString" or key == "CreateTexture" then
-      return function() return fakeFrame() end
+    if key == "CreateFontString" then return function() return fakeFrame() end end
+    if key == "CreateTexture" then
+      return function(self, _, layer)
+        local texture=fakeFrame()
+        texture.parent,texture.layer=self,layer
+        textures[#textures+1]=texture
+        return texture
+      end
     end
+    if key == "SetSize" then return function(self,w,h) self.width,self.height=w,h end end
+    if key == "SetTexture" then return function(self,path) self.texture=path end end
+    if key == "SetVertexColor" then return function(self,...) self.color={...} end end
+    if key == "SetBlendMode" then return function(self,mode) self.blend=mode end end
     if key == "SetScript" then return function(self, event, fn) self.scripts[event] = fn end end
     if key == "SetText" then return function(self, text) self.text = text end end
     if key == "GetText" then return function(self) return self.text end end
@@ -58,6 +69,16 @@ assert(not addon.db.data)
 UnitFullName = function() return "Test", "Realm" end
 eventFrame.scripts.OnEvent(eventFrame, "PLAYER_LOGIN")
 assert(addon.db.data and SlashCmdList.ERRANDMASTER and SLASH_ERRANDMASTER1 == "/em", messages[#messages])
+local header,halo
+for _,texture in ipairs(textures) do
+  if texture.parent==addon.ui.frame and texture.texture and
+      texture.texture:find('PackLogo.blp',1,true) then header=texture end
+  if texture.parent==addon.ui.frame and texture.texture and
+      texture.texture:find('DestinationButtonGlow.blp',1,true) then halo=texture end
+end
+assert(header and halo and header.layer=='ARTWORK' and header.width<=21 and
+  halo.layer=='BACKGROUND' and halo.width>=44 and halo.color[4]>=.85 and halo.blend=='ADD',
+  'main-window logo keeps its border above an independent brighter glow')
 assert(addon.destinations.frame and not addon.destinations.frame:IsShown(),
   'empty target sidebar stays hidden on first login')
 assert(addon.ui.targetsButton and addon.ui.targetsButton.scripts.OnClick,
@@ -91,6 +112,35 @@ assert(defaultSource=='configured' and #allDefault==12,
 assert(addon.npcs.state=='indexing', 'provider loaded before ErrandMaster starts')
 assert(addon.minimap and addon.minimap.Attach and addon.destinations and
   addon.destinations.Toggle, 'the boot harness loads every TOC module')
+-- Actual boot hooks must feed the selected first row, including transient legs.
+local oldActiveTarget,oldPlan=addon.ActiveTarget,addon.Plan
+local stagedTarget={id='transit:1',transitForId='1',name='Flight master',mapID=10,x=.4,y=.5}
+local delivered={}
+local oldBridgeUpdate=addon.waypointUI and addon.waypointUI.Update
+addon.ActiveTarget=function() return stagedTarget end
+addon.Plan=function() return {stagedTarget},{} end
+addon.waypointUI.Update=function(_,target,explicit)
+  delivered[#delivered+1]={target=target,explicit=explicit}
+end
+addon:RevalidateNavigation({}, {})
+assert(delivered[#delivered].target==stagedTarget and not delivered[#delivered].explicit,
+  'periodic revalidation feeds the actual transient first row')
+addon:NavigateNext()
+assert(delivered[#delivered].target==stagedTarget and delivered[#delivered].explicit,
+  'manual next publishes the selected row explicitly')
+stagedTarget=nil
+addon:RevalidateNavigation({}, {})
+assert(delivered[#delivered].target==nil,
+  'empty queue notifies bridge to clear only its owned session')
+addon.ActiveTarget,addon.Plan=oldActiveTarget,oldPlan
+addon.waypointUI.Update=oldBridgeUpdate
+local priorRevalidate=addon.RevalidateNavigation
+local lateChecks=0
+addon.RevalidateNavigation=function() lateChecks=lateChecks+1 end
+eventFrame.scripts.OnEvent(eventFrame,'ADDON_LOADED','WaypointUI')
+assert(lateChecks==1, 'late Waypoint UI load schedules an immediate target sync')
+addon.RevalidateNavigation=priorRevalidate
+
 assert(addon.trails.bucket == addon.db:TrailBucket() and not addon.trails:IsEnabled(),
   'boot binds the current character without enabling movement recording')
 assert(BINDING_NAME_ERRANDMASTER_WHEEL and type(ErrandMaster_OpenWheel) == "function")
@@ -98,12 +148,18 @@ assert(ErrandMaster_OpenWheel())
 mouseY = 650
 addon.radial.frame.scripts.OnUpdate(addon.radial.frame)
 addon.radial.frame.scripts.OnMouseDown(addon.radial.frame, "LeftButton")
-assert(addon.radial.submenu == "Bank")
+assert(addon.radial.submenu == "Services")
 local bankTier=addon.radial.tiers[#addon.radial.tiers]
 mouseX, mouseY = addon.radial.centerX + bankTier.radius*math.cos(bankTier.angles[1]),
   addon.radial.centerY + bankTier.radius*math.sin(bankTier.angles[1])
 addon.radial.frame.scripts.OnUpdate(addon.radial.frame)
 addon.radial.frame.scripts.OnMouseDown(addon.radial.frame, "LeftButton")
+assert(addon.radial.submenu == "Bank")
+local personal=addon.radial.tiers[#addon.radial.tiers]
+mouseX,mouseY=addon.radial.centerX+personal.radius*math.cos(personal.angles[1]),
+  addon.radial.centerY+personal.radius*math.sin(personal.angles[1])
+addon.radial.frame.scripts.OnUpdate(addon.radial.frame)
+addon.radial.frame.scripts.OnMouseDown(addon.radial.frame,"LeftButton")
 assert(#addon.errands:All() == 1 and addon.errands:All()[1].category == "Bank")
 assert(addon.errands:All()[1].origin == "suggested")
 addon.errands:Delete(addon.errands:All()[1].id)
@@ -361,8 +417,10 @@ assert(borderDeferred[1].nearbyZoneCandidate and
   'unrouted nearby zone candidate remains deferred')
 addon.destinations:Refresh()
 assert(addon.destinations.lines[1]:find('Border',1,true) and
-  addon.destinations.lines[1]:find('yd - Border - Unknown Path',1,true),
-  'a nearby-zone direct estimate must remain explicitly an unknown path')
+  addon.destinations.lines[1]:find('Border - Unknown Path',1,true) and
+  addon.destinations.lines[1]:find('From you: Unknown',1,true) and
+  addon.destinations.lines[1]:find('From route start: Unknown',1,true),
+  'an unlocated nearby-zone hint must not become a measured destination')
 addon.route.Plan=baseRoute
 addon.zoneSearch.Nearby=baseNearby
 addon.zoneSearch.Nearby=function(_,map,x,y,wanted,radius,limit)

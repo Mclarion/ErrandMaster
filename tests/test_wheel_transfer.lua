@@ -1,5 +1,6 @@
 local f=dofile('tests/wheel_fixture.lua')()
 local w,db=f.wheel,f.addon.db
+f:legacyLayout()
 local slots=db.data.settings.wheelSlots
 local function index(category)
   for i,v in ipairs(slots) do if v.category==category then return i end end

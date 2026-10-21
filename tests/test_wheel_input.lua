@@ -1,7 +1,8 @@
 local f=dofile('tests/wheel_fixture.lua')()
 local wheel,addon=f.wheel,f.addon
+f:legacyLayout()
 f:root()
-assert(wheel.count==11 and not wheel.slots[1].label.shown)
+assert(wheel.count==11 and wheel.slots[1].label.shown)
 assert(wheel.slots[1].sector.texture:find('WheelPatternT0N11.blp',1,true))
 assert(wheel.slots[1].glow.texture:find('WheelBorderT0N11.blp',1,true))
 assert(wheel.centerArt.texture:find('WheelCenter.blp',1,true))
@@ -14,7 +15,7 @@ assert(math.abs(wheel.slots[1].sector.w-addon.wheelGeometry.artDiameter(tier.out
   'explicit UVs preserve physical radius')
 for i=1,wheel.count do
   local slot=wheel.slots[i]
-  assert(slot.texture.shown and not slot.label.shown and slot.texture.alpha~=0)
+  assert(slot.texture.shown and slot.label.shown and slot.texture.alpha~=0)
   local sectorUV={addon.wheelGeometry.texCoords(tier.angles[i]-math.pi/2)}
   local jewelUV={addon.wheelGeometry.texCoords(tier.angles[i]+math.pi/2)}
   for j=1,8 do

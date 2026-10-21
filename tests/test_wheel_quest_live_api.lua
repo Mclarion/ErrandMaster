@@ -1,6 +1,7 @@
 -- Integrated click path through the real log inventory and native waypoint adapter.
 local f=dofile('tests/wheel_fixture.lua')()
 local addon,w=f.addon,f.wheel
+f:legacyLayout()
 local log={
  {title='Loch Modan',isHeader=true,isCollapsed=false},
  {title='No POI',questID=101,isHeader=false,isComplete=false},
@@ -30,14 +31,16 @@ assert(w.menuEntries[1].name=='Loch Modan' and w.menuEntries[2].name=='Ashenvale
 f:click(1)
 assert(w.menuEntries[1].name=='No POI' and w.menuEntries[2].name=='Quest with native waypoint')
 f:click(1)
-assert(#queued==0 and w.frame.shown,'no-POI quest cannot queue a fabricated location')
+assert(#queued==1 and queued[1].questID==101 and queued[1].mapID==nil and
+  queued[1].x==nil,'no-POI quest queues without a fabricated location')
+f:root();f:click(9);f:click(1)
 f:click(2)
-assert(#queued==1 and queued[1].questID==102 and queued[1].mapID==44 and
-  queued[1].x==.2,'native waypoint map, not player map, reaches real queue')
+assert(#queued==2 and queued[2].questID==102 and queued[2].mapID==44 and
+  queued[2].x==.2,'native waypoint map, not player map, reaches real queue')
 f:root();f:click(9);f:click(2)
 table.remove(log,5)
 f:click(1)
-assert(#queued==1,'removed live quest cannot queue a stale waypoint')
+assert(#queued==2,'removed live quest cannot queue a stale waypoint')
 C_QuestLog=nil
 w:Close();f:root();f:click(9)
 assert(w.count==1 and w.menuEntries[1].category=='Back',

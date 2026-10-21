@@ -1,5 +1,7 @@
 # ErrandMaster client acceptance failures — 2026-10-17
 
+Current test candidate: 0.6.14-test1; consult `RELEASE-v0.6.14-test1.md`. The dated checkpoints and installed-version references below are historical. Offline fixes do not close client acceptance; the all-waypoints in-world marker failure remains open until tested in WoW.
+
 ## Current reconciliation against the original player request
 
 This summary supersedes historical source/install status statements below, not the original requirements. Installed baseline is v0.6.9-test1, with no new player acceptance reported. Working source contains additional provider, discovery, route-evidence and responsiveness fixes documented in NEXT-FIX-BUNDLE.md. The prepared v0.6.10-test1 archive is stale and must not be treated as current source. Publication/installation remain paused.

@@ -1,7 +1,7 @@
 local _, addon = ...
 addon.destinations = {}
 local destinations = addon.destinations
-local ROW_HEIGHT, GAP = 54, 4
+local ROW_HEIGHT, GAP = 76, 4
 local CARD_TEXTURE = "Interface\\AddOns\\ErrandMaster\\Textures\\"
 local colors = {Blue={.157,.439,1}, Violet={.675,.208,.847},
   Red={.933,.188,.188}, Green={.031,.745,.471}, Amber={.933,.537,0},
@@ -62,60 +62,106 @@ local function title(value, limit)
   return value:sub(1, cut) .. "..."
 end
 
-local function entry(item, kind, index, activeID, nextID)
+local function located(item)
+  return type(item) == "table" and safe(item) and
+    number(item.mapID, 1, 1000000000) and number(item.x, 0, 1) and
+    number(item.y, 0, 1)
+end
+local function service(category)
+  if not safe(category) or type(category) ~= "string" then return "Target" end
+  local specialty = category:match("^(.-) Vendor$")
+  if specialty then return "Vendor: " .. title(specialty, 22) end
+  if category == "Vendor" then return "Vendor" end
+  return title(category, 28)
+end
+-- Native map sizes or equal-instance projections only; normalized map
+-- coordinates alone cannot be interpreted as yards.
+local function direct(from, to)
+  if not located(from) or not located(to) then return end
+  if from.mapID == to.mapID and type(addon.MapWorldSize) == "function" then
+    local ok, width, height = pcall(addon.MapWorldSize, addon, from.mapID)
+    if ok and number(width, .000001, 10000000) and number(height, .000001, 10000000) then
+      local dx, dy = (from.x-to.x)*width, (from.y-to.y)*height
+      return math.sqrt(dx*dx+dy*dy)
+    end
+  end
+  local nav = addon.navigation
+  if nav and type(nav.WorldPosition) == "function" then
+    local ok1, instance1, north1, west1 = pcall(nav.WorldPosition, nav, from.mapID, from.x, from.y)
+    local ok2, instance2, north2, west2 = pcall(nav.WorldPosition, nav, to.mapID, to.x, to.y)
+    if ok1 and ok2 and number(instance1, 0, 10000000) and instance1 == instance2 and
+        number(north1, -10000000, 10000000) and number(west1, -10000000, 10000000) and
+        number(north2, -10000000, 10000000) and number(west2, -10000000, 10000000) then
+      local dx,dy=north1-north2,west1-west2
+      return math.sqrt(dx*dx+dy*dy)
+    end
+  end
+end
+local function distanceLabel(from, to)
+  local yards=direct(from,to)
+  return number(yards, 0, 10000000) and string.format("%.0f yd direct",yards) or "Unknown"
+end
+local function entry(item, kind, previous, player, routeStart)
   if type(item) ~= "table" or not safe(item) then return end
   local ok, id, name, map, x, y, yards, walkYards, status, completed,
-    nearby, flight, favorite, category = pcall(function()
+    nearby, flight, favorite, category, manualPosition, transit = pcall(function()
       return item.id, item.name, item.mapID, item.x, item.y,
         item.directYards, item.walkYards, item.walkStatus, item.completed,
-        item.nearbyZoneCandidate, item.taxiFlightNode, item.favorite, item.category
+        item.nearbyZoneCandidate, item.taxiFlightNode, item.favorite, item.category,
+        item.manualPosition, item.transitForId
     end)
   if not ok or not safe(id) or not safe(name) or not safe(map) or
       not safe(x) or not safe(y) or not safe(yards) or not safe(walkYards) or
       not safe(status) or not safe(completed) or not safe(nearby) or
-      not safe(flight) or not safe(favorite) or not safe(category) then return end
+      not safe(flight) or not safe(favorite) or not safe(category) or
+      not safe(manualPosition) or not safe(transit) then return end
   if id ~= nil and not validID(id) then return end
-  local location = number(x, 0, 1) and number(y, 0, 1) and
-    string.format("%.1f, %.1f", x * 100, y * 100) or nil
+  -- A known destination on another map is still resolved even when the
+  -- planner defers it; only genuinely missing coordinates disable ordering.
+  local resolved=located(item)
   local evidence
-  if kind == "done" then evidence = "Done"
-  elseif status == "known-route" and number(walkYards, 0, 10000000) then
-    evidence = string.format("%.0f yd - Observed Path", walkYards)
+  if status == "known-route" and number(walkYards, 0, 10000000) then
+    evidence = "Observed Path"
   elseif status == "partial-route" and number(walkYards, 0, 10000000) then
-    evidence = string.format("%.0f yd observed - Connector Unknown", walkYards)
-    if location then evidence = location .. " - " .. evidence end
+    evidence = "Connector Unknown"
   elseif type(nearby) == "table" and safe(nearby) then
     local read, zone, distance = pcall(function() return nearby.zoneName, nearby.directYards end)
     if read and safe(zone) and type(zone) == "string" and number(distance, 0, 10000000) then
-      evidence = string.format("%.0f yd - %s - Unknown Path", distance, title(zone, 22))
+      evidence = title(zone, 22) .. " - Unknown Path"
     end
   end
   if not evidence and type(flight) == "string" and #flight <= 80 then
     evidence = "Fly: " .. title(flight, 20) .. " - Walk Unknown"
   end
-  if not evidence and number(yards, 0, 10000000) then
-    evidence = string.format("~%.0f yd direct - Unknown Path", yards)
-    if location then evidence = location .. " - " .. evidence end
-  end
-  if not evidence then evidence = location and (location .. " - Unknown Path") or "Unknown Location" end
+  if not evidence then evidence = resolved and "Unknown Path" or "Unknown Location" end
+  local overridden = not transit and resolved and number(manualPosition, 1, 1000000) and
+    manualPosition % 1 == 0
+  local area = item.areaTarget == true and " - Quest area" or ""
+  local text = service(category) .. " - " .. title(name, 32) .. area ..
+    (transit and (category=='Boat' and " - Boat step" or " - Flight step") or overridden and " - Overridden" or "") .. "\n" ..
+    "From you: " .. distanceLabel(player,resolved and item or nil) .. "\n" ..
+    (routeStart and "From route start: " or "From previous stop: ") ..
+    distanceLabel(previous,resolved and item or nil) .. " - " .. evidence
   return {id=id, completed=kind == "done" or completed == true,
-    favorite=favorite == true, category=category,
-    text=(favorite == true and "[Fav] " or "") .. title(name, 27) .. " - " .. evidence}
+    favorite=favorite == true, category=category, resolved=resolved,
+    overridden=overridden, transit=transit~=nil, text=text}
 end
 
-local function append(list, entries, kind, seen, activeID, nextID)
-  if type(entries) ~= "table" or not safe(entries) then return end
+local function append(list, entries, kind, seen, previous, player)
+  if type(entries) ~= "table" or not safe(entries) then return previous end
   local okLength, count = pcall(function() return #entries end)
-  if not okLength or type(count) ~= "number" or count < 0 then return end
+  if not okLength or type(count) ~= "number" or count < 0 then return previous end
   for i = 1, count do
     local ok, item = pcall(function() return entries[i] end)
     if not ok or item == nil then break end
-    local row = entry(item, kind, i, activeID, nextID)
+    local row = entry(item, kind, #list == 0 and player or previous, player, #list == 0)
     if row and (not row.id or not seen[row.id]) then
       list[#list+1] = row
+      previous = item -- An unresolved displayed row must not be skipped.
       if row.id then seen[row.id] = true end
     end
   end
+  return previous
 end
 
 local function settings()
@@ -136,7 +182,9 @@ end
 function destinations:Change(action, index)
   local row = self.visible and self.visible[index]
   local id = row and row.id
-  if not validID(id) or not addon.errands then return end
+  if not validID(id) or not addon.errands or row.transit then return end
+  if (action == "activate" or action == "reset") and not row.resolved then return end
+  if action == "reset" and not row.overridden then return end
   local ok, item = pcall(addon.errands.Get, addon.errands, id)
   if not ok or not item then return end
   if action == "activate" then
@@ -146,6 +194,10 @@ function destinations:Change(action, index)
     end
   elseif action == "favorite" then
     pcall(addon.errands.Update, addon.errands, id, {favorite=not (item.favorite == true)})
+  elseif action == "reset" then
+    if type(addon.errands.ClearOrder) ~= "function" then return end
+    local cleared = pcall(addon.errands.ClearOrder, addon.errands, id)
+    if not cleared then return end
   elseif action == "remove" then
     pcall(addon.errands.Delete, addon.errands, id)
   else return end
@@ -154,7 +206,7 @@ end
 function destinations:Drop(sourceIndex, targetIndex)
   local source, target = self.visible[sourceIndex], self.visible[targetIndex]
   if not source or not target or not validID(source.id) or not validID(target.id)
-      or source.id == target.id then return end
+      or source.transit or target.transit or not source.resolved or not target.resolved or source.id == target.id then return end
   -- Reorder accepts a displayed slot, not the target's saved-list index.
   local ok = pcall(addon.errands.Reorder, addon.errands, source.id, targetIndex)
   if ok then
@@ -197,7 +249,8 @@ function destinations:CursorSlot()
   local offset = viewport:GetVerticalScroll() or 0
   if not number(offset, 0, 1000000) then return end
   local slot = math.floor((top - y + offset) / (ROW_HEIGHT + GAP)) + 1
-  return math.max(1, math.min(#self.entries, slot))
+  slot = math.max(1, math.min(#self.entries, slot))
+  return self.visible[slot] and self.visible[slot].resolved and slot or nil
 end
 function destinations:StopDrag(commit)
   local source = self.dragSource
@@ -253,7 +306,7 @@ function destinations:ClampSize()
   local listWidth = math.max(1, w - 34)
   self.scroll:SetSize(listWidth, math.max(1,h-45))
   self.content:SetWidth(listWidth)
-  for _, card in ipairs(self.cards) do card:SetWidth(math.max(1,listWidth-3)) end
+  for _, card in ipairs(self.cards) do card:SetWidth(math.max(1,listWidth-74)) end
   self:UpdateScroll()
 end
 function destinations:UpdateScroll()
@@ -276,51 +329,62 @@ local function tooltip(button, label)
 end
 function destinations:MakeCard(i)
   local card = CreateFrame("Frame", nil, self.content)
-  card:SetSize(math.max(1,self.scroll:GetWidth()-3), ROW_HEIGHT)
+  card:SetSize(math.max(1,self.scroll:GetWidth()-74), ROW_HEIGHT)
   card:EnableMouse(true)
   card:RegisterForDrag("LeftButton")
   local pattern = card:CreateTexture(nil, "BACKGROUND")
   pattern:SetPoint("TOPLEFT", card, "TOPLEFT", 0, 0)
   pattern:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", 0, 0)
   pattern:SetTexture(CARD_TEXTURE .. "DestinationCardPattern.blp")
-  pattern:SetAlpha(.48)
+  pattern:SetAlpha(.30)
   local art = card:CreateTexture(nil, "BORDER")
   art:SetPoint("TOPLEFT", card, "TOPLEFT", 0, 0)
   art:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", 0, 0)
   art:SetTexture(CARD_TEXTURE .. "CardFrame.blp")
-  art:SetAlpha(.8)
+  art:SetAlpha(.66)
   card.pattern, card.frameArt = pattern, art
   local row = card:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  row:SetPoint("TOPLEFT", card, "TOPLEFT", 10, -8)
-  row:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -39, 7)
-  row:SetJustifyH("CENTER"); row:SetJustifyV("MIDDLE")
+  row:SetPoint("TOPLEFT", card, "TOPLEFT", 12, -5)
+  row:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -7, 5)
+  row:SetJustifyH("LEFT"); row:SetJustifyV("MIDDLE")
+  row:SetTextColor(1,1,1,1)
+  row:SetShadowColor(0,0,0,1); row:SetShadowOffset(1,-1)
   local controls = {}
-  for _, spec in ipairs({{"remove", "PackCross.blp", -5, -3, "Remove target"},
-      {"favorite", "PackFavourites.blp", -5, -20, "Toggle favorite"},
-      {"activate", "PackWaypoint.blp", -5, -37, "Move to top / navigate"}}) do
+  for _, spec in ipairs({{"remove", "PackCross.blp", -2, "Remove target"},
+      {"favorite", "PackFavourites.blp", -21, "Toggle favorite"},
+      {"activate", "PackWaypoint.blp", -40, "Move to top / navigate"},
+      {"reset", nil, -59, "Reset order"}}) do
     local action = spec[1]
     local button = CreateFrame("Button", nil, card)
-    button:SetSize(20,17)
-    button:SetPoint("TOPRIGHT", card, "TOPRIGHT", spec[3], spec[4])
+    button:SetSize(action == "reset" and 66 or 22,action == "reset" and 17 or 19)
+    button:SetPoint("TOPLEFT", card, "TOPRIGHT", 4, spec[3])
     local glow = button:CreateTexture(nil, "BORDER")
     glow:SetPoint("CENTER", button, "CENTER", 0, 0)
-    glow:SetSize(23, 23)
+    glow:SetSize(action == "reset" and 72 or 30, action == "reset" and 23 or 27)
     glow:SetTexture(CARD_TEXTURE .. "DestinationButtonGlow.blp")
     glow:SetVertexColor(1, .83, .42)
-    glow:SetAlpha(.64)
+    glow:SetAlpha(.9)
     button.glow = glow
-    local icon = button:CreateTexture(nil, "ARTWORK")
-    icon:SetSize(15,15)
-    icon:SetPoint("CENTER", button, "CENTER", 0,0)
-    icon:SetTexture(CARD_TEXTURE .. spec[2]); button.icon = icon
-    tooltip(button, spec[5])
+    if spec[2] then
+      local icon = button:CreateTexture(nil, "ARTWORK")
+      icon:SetSize(15,15)
+      icon:SetPoint("CENTER", button, "CENTER", 0,0)
+      icon:SetTexture(CARD_TEXTURE .. spec[2]); button.icon = icon
+    else
+      local label=button:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+      label:SetPoint("CENTER",button,"CENTER",0,0)
+      label:SetText("Reset order")
+      button.label=label
+    end
+    tooltip(button, spec[4])
     button:SetScript("OnClick", function() self:Change(action, i) end)
     controls[action] = button
   end
   card:SetScript("OnEnter", function() self.hoveredRow = i end)
   card:SetScript("OnLeave", function() if self.hoveredRow == i then self.hoveredRow = nil end end)
   card:SetScript("OnDragStart", function()
-    if not self.visible[i] or not validID(self.visible[i].id) then return end
+    if not self.visible[i] or not self.visible[i].resolved or
+        not validID(self.visible[i].id) then return end
     self.dragSource, self.dragTarget = i, nil
     self.ghost.label:SetText(self.visible[i].text)
     local shade=tint(self.visible[i].category)
@@ -410,7 +474,7 @@ function destinations:Create()
   end)
   if self.scroll.EnableMouseWheel then self.scroll:EnableMouseWheel(true) end
   self.ghost=CreateFrame("Frame",nil,UIParent)
-  self.ghost:SetSize(245,ROW_HEIGHT)
+  self.ghost:SetSize(196,ROW_HEIGHT)
   self.ghost:SetAlpha(.85)
   self.ghost.pattern=self.ghost:CreateTexture(nil,"BACKGROUND")
   self.ghost.pattern:SetPoint("TOPLEFT",self.ghost,"TOPLEFT",0,0)
@@ -453,7 +517,8 @@ function destinations:Render(preview)
     card:ClearAllPoints()
     card:SetPoint("TOPLEFT",self.content,"TOPLEFT",0,card.currentY)
     for action,button in pairs(self.controls[i]) do
-      if item.id and (action~="activate" or not item.completed) then button:Show()
+      if item.id and not item.transit and (action ~= "activate" or item.resolved and not item.completed) and
+          (action ~= "reset" or item.overridden) then button:Show()
       else button:Hide() end
     end
     self.controls[i].favorite.icon:SetAlpha(item.favorite and 1 or .55)
@@ -466,15 +531,20 @@ end
 function destinations:Refresh()
   if not self.frame then return false end
   local entries,seen={},{}
+  local player
+  if type(addon.Position)=="function" then
+    local ok,map,x,y=pcall(addon.Position,addon)
+    if ok then player={mapID=map,x=x,y=y} end
+  end
   if type(addon.Plan)=="function" then
     local ok,ordered,deferred=pcall(addon.Plan,addon)
     if ok then
       if addon.route and type(addon.route.DisplayOrder)=="function" then
         local valid,display=pcall(addon.route.DisplayOrder,addon.route,ordered,deferred)
-        if valid then append(entries,display,"ordered",seen) end
+        if valid then append(entries,display,"ordered",seen,nil,player) end
       else
-        append(entries,ordered,"ordered",seen)
-        append(entries,deferred,"deferred",seen)
+        local previous=append(entries,ordered,"ordered",seen,nil,player)
+        append(entries,deferred,"deferred",seen,previous,player)
       end
     end
   end

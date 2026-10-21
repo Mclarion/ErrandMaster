@@ -24,6 +24,8 @@ local function frame(parent)
   end
   function f:ClearAllPoints() self.point=nil end
   function f:SetScript(name, fn) self.scripts[name]=fn end
+  function f:Show() self.shown=true end
+  function f:Hide() self.shown=false end
   function f:SetAlpha(value) self.alpha=value end
   function f:EnableMouse(value) self.mouse=value end
   function f:RegisterForClicks(...) self.clicks={...} end
@@ -37,6 +39,7 @@ local function frame(parent)
     function t:SetSize(w,h) self.width,self.height=w,h end
     function t:SetPoint(...) self.point={...} end
     function t:SetTexture(path) self.path=path end
+    function t:SetRotation(value) self.rotation=value end
     self.icon=t
     return t
   end
@@ -92,13 +95,20 @@ assert(addon.minimap:Attach()==true, 'button attaches after initialization')
 local button=addon.minimap.button
 assert(button and button.parent==UIParent and button.kind=='Button', 'unclipped UIParent button')
 assert(button.point[2]==Minimap and button.strata=='FULLSCREEN_DIALOG' and
-  button.level>Minimap.level and button.width>=36 and button.icon.width>=30,
+  button.level>Minimap.level and button.width>=36 and button.icon.width>=28,
   'button sits above the map, with a usable hitbox and icon')
 assert(button.icon.path:find('Textures\\PackLogo.blp',1,true),
   'the minimap button uses the cropped user-supplied compass')
 assert(button.emGlow and button.emGlow.layer=='BACKGROUND' and button.emGlow.blend=='ADD' and
   button.emGlow.width>button.icon.width and button.icon.color==nil,
   'minimap art remains untinted above an independent soft backlight')
+assert(button.icon.width<=button.width-8 and button.icon.height<=button.height-8 and
+  button.emGlow.alpha>=.85 and button.emGlow.width>=button.width+16,
+  'logo border has breathing room in the hitbox and a strong separate halo')
+local rimClearance=math.sqrt(2)*button.width/2
+local rimDistance=math.sqrt(button.point[4]^2+button.point[5]^2)
+assert(rimDistance>Minimap.width*Minimap.scale/(2*button:GetEffectiveScale())+rimClearance,
+  'whole launcher square clears minimap rim even on diagonal drags')
 assert(button.clicks[1]=='LeftButtonUp' and button.clicks[2]=='RightButtonUp' and
   button.clicks[3]=='MiddleButtonUp')
 button.scripts.OnClick(button,'LeftButton')
@@ -133,20 +143,20 @@ assert(opened==3, 'a drag without release click cannot swallow a later click')
 -- Restoring a saved angle does not touch any other button.
 Minimap.width,Minimap.height=280,210
 button.scripts.OnUpdate(button,.21)
-assert(math.abs(button.point[4])<.001 and math.abs(button.point[5]-94)<.001,
+assert(math.abs(button.point[4])<.001 and math.abs(button.point[5]-(84+36*math.sqrt(2)/2+3))<.001,
   'idle resize reattaches at saved angle using map-to-button effective scale')
 local placements=button.placements
 button.scripts.OnUpdate(button,.21)
 assert(button.placements==placements,'unchanged geometry does not repeatedly reanchor')
 Minimap.scale=1.2
 button.scripts.OnUpdate(button,.21)
-assert(math.abs(button.point[5]-136)<.001,'map scaling moves button out to physical rim')
+assert(math.abs(button.point[5]-(126+36*math.sqrt(2)/2+3))<.001,'map scaling moves button out to physical rim')
 button.scale=.75
 button.scripts.OnUpdate(button,.21)
-assert(math.abs(button.point[5]-178)<.001,'different UIParent/button scale is compensated')
+assert(math.abs(button.point[5]-(168+36*math.sqrt(2)/2+3))<.001,'different UIParent/button scale is compensated')
 Minimap.width=0
 button.scripts.OnUpdate(button,.21)
-assert(math.abs(button.point[5]-178)<.001,'transient invalid geometry preserves last safe position')
+assert(math.abs(button.point[5]-(168+36*math.sqrt(2)/2+3))<.001,'transient invalid geometry preserves last safe position')
 Minimap.width,Minimap.height,Minimap.scale,button.scale=140,140,.8,1
 addon.minimap.button=nil
 settings.minimapAngle=180
@@ -193,6 +203,84 @@ addon.radial=nil
 addon.destinations=nil
 button.scripts.OnClick(button,'LeftButton')
 button.scripts.OnClick(button,'RightButton')
+-- Active navigation is a second, non-clickable marker independent of the launcher.
+C_Minimap={GetUiMapID=function() return 42 end, GetViewRadius=function() return 10 end}
+GetCVar=function() return '0' end
+Minimap.width,Minimap.height=140,140
+addon.minimap:RefreshTarget({id='bank',name='Bank',mapID=42,x=.51,y=.5},42,.5,.5,1000,1000)
+local marker=addon.minimap.targetMarker
+assert(marker and marker.shown and marker.mouse==false and marker~=button and
+  marker.point[2]==Minimap and marker.point[4]>0 and marker.point[4]+marker.width/2<Minimap.width/2 and
+  math.abs(marker.point[5])<.001 and marker.icon.path~=button.icon.path,
+  'on-map destination is scaled from authoritative minimap radius, not launcher rim')
+addon.minimap:RefreshTarget({id='quest',name='Quest',mapID=43,x=.51,y=.5},42,.5,.5,1000,1000)
+assert(not marker.shown, 'cross-map destination is not projected')
+addon.minimap:RefreshTarget({id='bad',mapID=42,x=0/0,y=.5},42,.5,.5,1000,1000)
+assert(not marker.shown, 'invalid coordinates clear prior marker')
+addon.minimap:RefreshTarget({id='bank',mapID=42,x=.51,y=.5},42,.5,.5,1000,1000)
+Minimap.width=280; addon.minimap:UpdateTargetGeometry()
+assert(marker.shown and marker.point[4]>0 and marker.point[4]<70,
+  'rectangular resize retains a square marker within the shorter map dimension')
+GetCVar=function() return '1' end
+GetPlayerFacing=function() return math.pi/2 end
+addon.minimap:UpdateTargetGeometry()
+assert(marker.shown and math.abs(marker.point[4])<.001 and
+  marker.point[5]<0 and math.abs(marker.point[5])+marker.height/2<Minimap.height/2,
+  'rotating minimap rotates east to bottom when facing north-to-east')
+GetPlayerFacing=function() return nil end
+addon.minimap:UpdateTargetGeometry()
+assert(not marker.shown, 'rotation without heading fails closed')
+GetCVar=function() return '0' end
+C_Minimap.GetViewRadius=function() return nil end
+addon.minimap:UpdateTargetGeometry()
+assert(not marker.shown, 'unavailable native view radius cannot create a guessed pin')
+C_Minimap.GetViewRadius=function() return 10 end
+addon.minimap:RefreshTarget({id='far',mapID=42,x=.9,y=.5},42,.5,.5,1000,1000)
+assert(marker.shown and marker.offscreen and marker.icon.path=='Interface\\MINIMAP\\MinimapArrow' and
+  marker.point[4]<140 and marker.point[4]>0,
+  'offscreen target uses a distinct rim bearing, never a false point-position pin')
+assert(math.abs(marker.point[4])+marker.width/2<Minimap.width/2 and
+  math.abs(marker.point[5])+marker.height/2<Minimap.height/2,
+  'rim arrow square stays within the map including its rotated corners')
+assert(marker.emGlow and marker.emGlow.layer=='BACKGROUND' and
+  marker.emGlow.blend=='ADD' and marker.emGlow.alpha>=.85 and
+  marker.icon.color==nil, 'destination pin and rim arrow keep original art over a halo')
+Minimap.width,Minimap.height=40,40
+addon.minimap:UpdateTargetGeometry()
+assert(marker.shown and math.sqrt(marker.point[4]^2+marker.point[5]^2)+
+  marker.width*math.sqrt(2)/2<=20, 'tiny map still contains the rotated arrow')
+Minimap.width,Minimap.height=30,30
+assert(not addon.minimap:UpdateTargetGeometry() and not marker.shown,
+  'marker hides when its square cannot fit the map')
+Minimap.width,Minimap.height=280,140
+addon.navigation={WorldPosition=function(_,map) if map==42 then return 0,100,100 end;return 0,100,0 end}
+addon.minimap:RefreshTarget({id='cross',mapID=43,x=.5,y=.5},42,.5,.5,1000,1000)
+assert(marker.shown and marker.offscreen,'same-world cross-zone target has an evidenced bearing marker')
+addon.navigation.WorldPosition=function(_,map) return map,100,100 end
+addon.minimap:RefreshTarget({id='cross',mapID=43,x=.5,y=.5},42,.5,.5,1000,1000)
+assert(not marker.shown,'different world instances cannot produce a bearing')
+addon.navigation=nil
+addon.minimap:RefreshTarget(nil)
+assert(not marker.shown, 'no target removes destination, preserving launcher')
+GetCVar=function() return '0' end
+local cachedCalls=0
+addon.CachedPlan=function() cachedCalls=cachedCalls+1
+  return {{id='cached',mapID=42,x=.51,y=.5}}, {},42,.5,.5 end
+addon.ActiveTarget=function(_,ordered) return ordered[1] end
+addon.MapWorldSize=function() return 1000,1000 end
+button.scripts.OnUpdate(button,.21)
+assert(cachedCalls==1 and marker.shown, 'timer uses cached route snapshot, never Plan')
+addon.Position=function() return 42,.505,.5 end
+button.scripts.OnUpdate(button,.21)
+assert(marker.shown and marker.point[4]>0 and marker.point[4]<70,
+  'marker uses live position between ten-yard route replans, not the old snapshot origin')
+addon.Position=function() return nil end
+button.scripts.OnUpdate(button,.21)
+assert(not marker.shown,'unavailable live position must not reuse stale geometry')
+addon.Position=nil
+addon.CachedPlan=function() cachedCalls=cachedCalls+1; return {},{},42,.5,.5 end
+button.scripts.OnUpdate(button,.21)
+assert(not marker.shown, 'empty cached plan removes stale destination')
 Minimap=nil
 addon.minimap.button=nil
 assert(addon.minimap:Attach()==false, 'missing minimap is harmless')

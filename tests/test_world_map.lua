@@ -67,14 +67,40 @@ local pins = addon.worldMap.pins
 assert(#pins == 3, 'only valid same-map route stops and observed services make pins')
 assert(pins[1].parent == canvas and pins[2].parent == canvas and pins[3].parent == canvas)
 assert(pins[1].shown and pins[2].shown and pins[3].shown)
+assert(pins[1].icon.allPoints==pins[1] and pins[1].glow.width>=32 and
+  pins[1].glow.blend=='ADD' and pins[1].glow.vertexColor[4]>=.85,
+  'map pin artwork fits its parent and a stronger halo remains behind it')
+assert(pins[2].point[4]<=canvas.width-pins[2].width/2 and
+  pins[2].point[5]<=-pins[2].height/2,
+  'edge marker square is contained within map canvas')
 assert(pins[1].point[4] == 250 and pins[1].point[5] == -250, 'normalized route coordinate')
-assert(pins[2].point[4] == 1000 and pins[2].point[5] == 0, 'edge coordinate')
+assert(pins[2].point[4] == 1000-pins[2].width/2 and
+  pins[2].point[5] == -pins[2].height/2, 'edge center is inset by the pin footprint')
 assert(pins[3].point[4] == 750 and pins[3].point[5] == -100, 'observed coordinate')
+canvas.width,canvas.height=20,18
+addon.worldMap:Refresh()
+assert(pins[2].width<=canvas.width and pins[2].height<=canvas.height and
+  pins[2].point[4]+pins[2].width/2<=canvas.width and
+  pins[2].point[5]-pins[2].height/2>=-canvas.height,
+  'pooled pins shrink and remain bounded on a tiny canvas')
+addon.worldMap:SetTarget({id='tiny',name='Small canvas',mapID=42,x=1,y=0})
+assert(addon.worldMap.targetPin.width<=canvas.width and
+  addon.worldMap.targetPin.point[4]+addon.worldMap.targetPin.width/2<=canvas.width,
+  'active target also remains wholly within a tiny map')
+addon.worldMap:SetTarget(nil)
+canvas.width,canvas.height=1000,500
+addon.worldMap:Refresh()
 assert(pins[1].label and pins[1].label.text:find('Bank', 1, true) and
   pins[1].label.text:find('yd direct', 1, true), 'route marker identifies its stop and direct distance')
 assert(pins[3].label.text:find('Mailbox', 1, true), 'observed marker identifies its service')
 assert(pins[1].number.text == '1' and pins[2].number.text == '4',
   'route numbering retains plan order even when intermediate stops are not on this map')
+local panel=addon.worldMap.questPanel
+assert(panel.width==202 and panel.height==182)
+for _,row in ipairs(addon.worldMap.questRows) do
+  assert(row.point[4]>=0 and row.point[4]+row.width<=panel.width and
+    -row.point[5]+row.height<=panel.height, 'quest buttons stay within the panel')
+end
 assert(pins[3].number.text == 'S1' and pins[1].number.point[1] == 'TOPRIGHT',
   'service pins have a distinct sequence and number is upper-right over marker')
 assert(pins[2].label.text:find('4. Edge',1,true), 'route label matches ordered stop number')
@@ -94,6 +120,13 @@ canvas.GetChildren=function() return nil end
 addon.worldMap:Refresh()
 assert(pins[1].icon.shown and pins[1].number.point[2]==pins[1],
   'own marker is restored when the native icon goes away')
+addon.worldMap:SetTarget({id='same',mapID=42,x=.25,y=.5})
+canvas.GetChildren=function() return addon.worldMap.targetPin end
+addon.worldMap:Refresh()
+assert(pins[1].icon.shown,
+  'our highlighted target is not misidentified as a native icon hiding the route pin')
+canvas.GetChildren=function() return nil end
+addon.worldMap:SetTarget(nil)
 route[1].category='Waypoint'
 addon.worldMap:Refresh()
 assert(pins[1].glow.shown and pins[1].glow.blend=='ADD', 'waypoint artwork is backlit')
@@ -284,4 +317,36 @@ for i=1,200 do
 end
 addon.worldMap:Refresh()
 assert(#addon.worldMap.pins == 120, 'marker display must be bounded')
+-- The selected destination is an independent, unmistakable overlay, not the launcher
+-- or an incidental first route/service pin; it survives the ordinary pin cap.
+addon.worldMap:SetTarget({id='selected',name='Find trainer',category='Class Trainer',mapID=42,x=.4,y=.6})
+addon.worldMap:Refresh()
+local active=addon.worldMap.targetPin
+assert(active and active.shown and active.point[4]==400 and active.point[5]==-300 and
+  active.label.text:find('TARGET',1,true) and active.label.text:find('Find trainer',1,true) and
+  active.glow.shown and active.icon.shown, 'active service target is independently highlighted')
+addon.worldMap:SetTarget({id='quest',name='Turn in',category='Quest',mapID=42,x=.2,y=.3})
+assert(active.shown and active.label.text:find('Turn in',1,true), 'quest selection replaces active marker')
+addon.worldMap:SetTarget({id='coords',name='Custom point',category='Custom',mapID=42,x=0,y=1})
+assert(active.shown and active.point[4]==active.width/2 and
+  active.point[5]==-500+active.height/2, 'edge coordinates keep target art within canvas')
+flaky.mapID=43; addon.worldMap:Refresh()
+assert(not active.shown, 'other map never displays active target')
+flaky.mapID=42
+addon.worldMap:SetTarget({id='bad',mapID=42,x=0/0,y=.5})
+assert(not active.shown, 'invalid target hides previously selected marker')
+addon.worldMap:SetTarget(nil)
+assert(not active.shown, 'deselection clears marker')
+local cacheCalls=0
+addon.CachedPlan=function() cacheCalls=cacheCalls+1
+  return {{id='quest',name='Quest objective',mapID=42,x=.4,y=.3}}, {},43,.8,.8 end
+addon.ActiveTarget=function(_,ordered) return ordered[1] end
+addon.worldMap:Refresh()
+assert(cacheCalls==1 and active.shown and active.point[4]==400,
+  'display-map route and selected main-route target use separate cached plans')
+flaky.mapID=43; addon.worldMap:Refresh()
+assert(not active.shown, 'cached target is never projected on wrong displayed map')
+addon.CachedPlan=function() return {},{},43,.8,.8 end
+flaky.mapID=42; addon.worldMap:Refresh()
+assert(not active.shown, 'empty main plan clears selected marker')
 print('world-map tests passed')

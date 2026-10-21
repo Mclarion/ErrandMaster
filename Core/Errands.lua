@@ -1,6 +1,7 @@
 local _, addon = ...
 addon.errands = {}
 local errands = addon.errands
+errands.revision = 0 -- session-only; a fresh login must replan
 local db = addon.db
 local MAX_ERRANDS = 200
 local fields = {name=true, description=true, category=true, priority=true, mapID=true,
@@ -76,6 +77,7 @@ function errands:Add(input)
   item.completed = false
   item.order = db.data.nextId
   table.insert(db:Bucket(item.scope), item)
+  self.revision = self.revision + 1
   local current = db.data.characters[db.character]
   if current then current.activeErrandId = nil end
   return item
@@ -103,16 +105,19 @@ function errands:Update(id, changes)
     table.insert(db:Bucket(candidate.scope), item)
   end
   for key in pairs(fields) do item[key] = candidate[key] end
+  self.revision = self.revision + 1
   return item
 end
 function errands:Delete(id)
   local item = assert(self:Get(id), "errand not found")
   local list = db:Bucket(item.scope)
   table.remove(list, assert(position(list, id)))
+  self.revision = self.revision + 1
 end
 function errands:Complete(id, completed)
   local item = assert(self:Get(id), "errand not found")
   item.completed = completed ~= false
+  self.revision = self.revision + 1
   return item
 end
 function errands:Reorder(id, target)
@@ -137,6 +142,17 @@ function errands:Reorder(id, target)
     end
   end
   moved.manualPosition = target
+  self.revision = self.revision + 1
   local current = db.data.characters[db.character]
   if current then current.activeErrandId = nil end
+end
+-- Reset only this errand's manual anchor. Do not renumber other saved rows.
+function errands:ClearOrder(id)
+  local item = assert(self:Get(id), "errand not found")
+  if item.manualPosition == nil then return item end
+  item.manualPosition = nil
+  self.revision = self.revision + 1
+  local current = db.data.characters[db.character]
+  if current then current.activeErrandId = nil end
+  return item
 end

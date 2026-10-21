@@ -1,6 +1,7 @@
 -- Actual wheel click path using a changing character quest-log inventory.
 local f=dofile('tests/wheel_fixture.lua')()
 local w, addon=f.wheel,f.addon
+f:legacyLayout()
 local rows={
   {name='Loch Modan',quests={{questID=501,title='Missing POI',hasLocation=false,isComplete=false},
     {questID=502,title='Native target',hasLocation=true,mapID=17,x=.3,y=.4,isComplete=false}}},
@@ -22,10 +23,11 @@ assert(label(1)=='Missing POI' and label(2)=='Native target' and w.count==3)
 assert(w.slots[1].sector.color[1]==w.history[2].entries[1].color[1],
   'quests inherit the selected zone color')
 f:click(1)
-assert(#calls==0 and w.frame.shown and notices[#notices]:find('location'),
-  'quest without native destination stays visible and gives guidance')
+assert(#calls==1 and calls[1][1]==501 and calls[1][2]==nil,
+  'quest without native destination queues without inventing a map')
+questRoot();f:click(1)
 f:click(2)
-assert(#calls==1 and calls[1][1]==502 and calls[1][2]==17,
+assert(#calls==2 and calls[2][1]==502 and calls[2][2]==17,
   'queue uses native target map, never player or zone map')
 questRoot();f:click(1);f:click(w.count)
 assert(w.submenu=='Quests' and label(2)=='Lac Modan','Back returns to zones')
@@ -34,7 +36,7 @@ assert(label(1)=='Autre quête','localized zone and quest names survive navigati
 -- A removal between render and click must never enqueue a stale target.
 rows[2].quests={}
 f:click(1)
-assert(#calls==1 and notices[#notices]:find('no longer'), 'removed quest is rejected')
+assert(#calls==2 and notices[#notices]:find('no longer'), 'removed quest is rejected')
 w.frame.scripts.OnEvent(w.frame,'QUEST_LOG_UPDATE')
 assert(w.count==1 and w.menuEntries[1].category=='Back',
   'quest-log update refreshes an open zone ring after removal')

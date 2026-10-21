@@ -13,11 +13,20 @@ local function copy(item)
   for key, value in pairs(item) do result[key] = value end
   return result
 end
--- Overlay manual ranks across both tuple groups without changing their meaning.
+local function located(point)
+  return point and type(point.mapID)=='number' and point.mapID>=1 and
+    type(point.x)=='number' and type(point.y)=='number' and
+    point.x>=0 and point.x<=1 and point.y>=0 and point.y<=1
+end
+-- Unlocated requests are visible but cannot displace a known destination.
+-- Walking evidence is independent of whether the destination is located.
 function route:DisplayOrder(ordered, deferred)
-  local all, anchors, free = {}, {}, {}
+  local all, unknown, anchors, free = {}, {}, {}, {}
   for _, group in ipairs({ordered or {}, deferred or {}}) do
-    for _, item in ipairs(group) do all[#all+1] = item end
+    for _, item in ipairs(group) do
+      if located(item) then all[#all+1] = item
+      else unknown[#unknown+1] = item end
+    end
   end
   local sequential=#all>0
   for _,item in ipairs(all) do
@@ -25,6 +34,7 @@ function route:DisplayOrder(ordered, deferred)
   end
   if sequential then
     table.sort(all,function(a,b) return a.sequenceRank<b.sequenceRank end)
+    for _,item in ipairs(unknown) do all[#all+1]=item end
     return all
   end
   for _, item in ipairs(all) do
@@ -48,6 +58,7 @@ function route:DisplayOrder(ordered, deferred)
   for i=1,#all do
     if not result[i] then result[i],nextFree=free[nextFree],nextFree+1 end
   end
+  for _,item in ipairs(unknown) do result[#result+1]=item end
   return result
 end
 local function usePlace(item, place)
@@ -84,6 +95,7 @@ function route:Plan(errands, mapID, x, y, optimize, locations, questPOIs, width,
           resolved.mapID, resolved.x, resolved.y, resolved.floor = poi.mapID, poi.x, poi.y, poi.floor
           resolved.questLocationSource = poi.source
           resolved.projectedWaypoint = poi.projected == true
+          resolved.areaTarget = poi.areaTarget == true
           eligible[#eligible+1] = resolved
         else deferred[#deferred+1] = item end
       elseif mapID and item.mapID == mapID and type(item.x) == "number" and
@@ -295,14 +307,17 @@ function route:Plan(errands, mapID, x, y, optimize, locations, questPOIs, width,
       cx, cy = item.x, item.y
     end
   end
+  for i,item in ipairs(deferred) do
+    deferred[i]=copy(item)
+    if deferred[i].questID then
+      deferred[i].mapID,deferred[i].x,deferred[i].y,deferred[i].floor=nil,nil,nil,nil
+    end
+    deferred[i].canOverride=located(deferred[i])
+  end
+  for _,item in ipairs(output) do item.canOverride=located(item) end
   return output, deferred
 end
 
-local function located(point)
-  return point and type(point.mapID)=='number' and point.mapID>=1 and
-    type(point.x)=='number' and type(point.y)=='number' and
-    point.x>=0 and point.x<=1 and point.y>=0 and point.y<=1
-end
 function route:Matches(item,place)
   if not located(place) or type(place.category)~='string' or
       (item.npcID and item.npcID~=place.npcID) then return false end
@@ -342,13 +357,6 @@ function route:Sequence(errands,origin,optimize,questPOIs,context)
       active[#active+1]=entry
     end
   end
-  local layout=self:DisplayOrder(active,{})
-  local reserved,free={},{}
-  for rank,item in ipairs(layout) do
-    if type(item.manualPosition)=='number' and item.manualPosition>=1 and item.manualPosition%1==0 then
-      reserved[rank]=item
-    else free[#free+1]=item end
-  end
   local function resolve(item,from)
     if item.questID then
       local poi=questByID[item.questID]
@@ -356,6 +364,7 @@ function route:Sequence(errands,origin,optimize,questPOIs,context)
         local result=copy(item)
         result.mapID,result.x,result.y,result.floor=poi.mapID,poi.x,poi.y,poi.floor
         result.questLocationSource,result.projectedWaypoint=poi.source,poi.projected==true
+        result.areaTarget=poi.areaTarget==true
         return result,from and context.distance(from,result)
       end
       return
@@ -375,7 +384,44 @@ function route:Sequence(errands,origin,optimize,questPOIs,context)
     end
     if best then return usePlace(copy(item),best),bestDistance end
   end
-  local output,deferred={},{}
+  -- Classify by location before applying anchors. A missing service cannot
+  -- consume a slot or erase the origin for destinations that do resolve.
+  local known, unlocated, requests = {}, {}, {}
+  for _,item in ipairs(active) do
+    local preview=resolve(item,origin)
+    if preview then
+      preview.manualPosition=item.manualPosition
+      known[#known+1]=preview
+      requests[preview]=item
+    else
+      item.canOverride=false
+      item.walkStatus='unknown-route'
+      if item.questID then item.mapID,item.x,item.y,item.floor=nil,nil,nil,nil end
+      unlocated[#unlocated+1]=item
+    end
+  end
+  for _,preview in ipairs(known) do
+    local rank=preview.manualPosition
+    if type(rank)=='number' and rank>=1 and rank%1==0 then
+      for _,item in ipairs(unlocated) do
+        if type(item.manualPosition)=='number' and item.manualPosition>=1 and
+            item.manualPosition%1==0 and item.manualPosition<=rank then
+          preview.manualPosition=preview.manualPosition-1
+        end
+      end
+      preview.manualPosition=math.max(1,preview.manualPosition)
+    end
+  end
+  local layout=self:DisplayOrder(known,{})
+  local reserved,free={},{}
+  for rank,preview in ipairs(layout) do
+    local item=requests[preview]
+    if type(preview.manualPosition)=='number' and preview.manualPosition>=1 and
+        preview.manualPosition%1==0 then
+      reserved[rank]=item
+    else free[#free+1]=item end
+  end
+  local output,deferred={},unlocated
   local from,cumulative,evidenceLost=origin,0,false
   local walk=context.walk
   local graph=walk and addon.walkGraph and addon.walkGraph:Build(walk.nodes,walk.edges,walk.playerLevel)
@@ -398,13 +444,13 @@ function route:Sequence(errands,origin,optimize,questPOIs,context)
     end
     if not selected then
       selected=copy(request); selected.sequenceRank=rank
-      if selected.questID then selected.x,selected.y=nil,nil end
+      if selected.questID then selected.mapID,selected.x,selected.y,selected.floor=nil,nil,nil,nil end
+      selected.canOverride=false
       selected.walkStatus='unknown-route'
       deferred[#deferred+1]=selected
-      -- No unresolved stop can supply a next origin or a cumulative total.
-      from=nil; cumulative=nil; evidenceLost=true
     else
       selected.sequenceRank,selected.directYards=rank,leg
+      selected.canOverride=true
       selected.walkStatus='unknown-route'
       if leg and cumulative then cumulative=cumulative+leg; selected.cumulativeYards=cumulative
       else cumulative=nil end

@@ -33,7 +33,9 @@ assert(route[1].x == .4 and task.x == .2, "quest destination must use current PO
 pois[1] = nil
 addon.quests:Invalidate()
 local ordered, deferred = addon.route:Plan(addon.errands:All(), 10, 0, 0, true, {}, addon.quests:OnMap(10), 1000, 500)
-assert(#ordered == 0 and #deferred == 1 and deferred[1] == task, "stale quests must not route to old coordinates")
+assert(#ordered == 0 and #deferred == 1 and deferred[1].id == task.id and
+  deferred[1].x == nil and deferred[1].canOverride == false and task.x == .2,
+  "stale quests must not route to old coordinates or mutate the saved snapshot")
 -- Physical map aspect ratio determines the order when world size is available.
 local choices = {
   {id="a", name="A", mapID=10, x=.4, y=.1},

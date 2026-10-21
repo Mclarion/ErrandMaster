@@ -19,6 +19,11 @@ local ordered,deferred=addon.route:Plan({first,second},10,.1,.5,true,nil,nil,100
 local display=addon.route:DisplayOrder(ordered,deferred)
 assert(addon:ActiveTarget(ordered,deferred).id==display[1].id,
   'navigation must share first visible target even when off-map is manually first')
+local missing={id='missing',name='Missing Mailbox',category='Mailbox',manualPosition=1}
+saved.missing=missing
+assert(addon:ActiveTarget({first},{missing}).id==first.id and
+  addon.route:DisplayOrder({first},{missing})[1].id==first.id,
+  'unknown location cannot become the active target before a located stop')
 addon.Refresh=function() end
 addon.db.data.characters.test.activeErrandId=first.id
 assert(addon:ActiveTarget(ordered,deferred).id==display[1].id,

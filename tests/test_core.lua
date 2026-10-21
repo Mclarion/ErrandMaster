@@ -18,9 +18,18 @@ assert(ErrandMasterDB.settings.showDestinations == true,
   'a new character starts with the separate target tracker visible')
 assert(ErrandMasterDB.settings.trailRecording == false and
   ErrandMasterDB.settings.routeMode == "observed")
-assert(#ErrandMasterDB.settings.wheelSlots == 11)
-assert(ErrandMasterDB.settings.wheelSlots[1].category == "Bank")
-assert(ErrandMasterDB.settings.wheelSlots[11].category == "Items")
+assert(#ErrandMasterDB.settings.wheelSlots == 8)
+assert(ErrandMasterDB.settings.wheelSlots[1].category == "Services")
+assert(ErrandMasterDB.settings.wheelSlots[8].category == "Items")
+local oldCategories={'Bank','Auction House','Repair','Vendor','Mailbox',
+  'Trainer','Travel','Custom','Quests','Skills','Items'}
+local function oldLayout()
+  local slots={}
+  for i,name in ipairs(oldCategories) do slots[i]={type='category',category=name} end
+  return slots
+end
+-- The remaining editor regressions intentionally operate on a retained legacy layout.
+ErrandMasterDB.settings.wheelSlots=oldLayout()
 assert(#ErrandMasterDB.settings.wheelSkills == 0 and #ErrandMasterDB.settings.wheelItems == 0)
 assert(addon.db:WheelCollectionAdd('spell',{type='spell',id=101}) and
   addon.db:WheelCollectionAdd('item',{type='item',id=202}))
@@ -50,7 +59,8 @@ local legacy = {schema=2, nextId=1, nextLocationId=1, account={}, characters={},
   locations={}, settings={wheelRadius=110, wheelIconSize=46}}
 ErrandMasterDB = legacy
 addon.db:Initialize("Test-Realm")
-assert(ErrandMasterDB == legacy and legacy.schema == 5 and #legacy.settings.wheelSlots == 11)
+assert(ErrandMasterDB == legacy and legacy.schema == 5 and #legacy.settings.wheelSlots == 8)
+legacy.settings.wheelSlots=oldLayout()
 ErrandMasterDB.settings.wheelSlots[3] = {type="macro", id=42}
 addon.db:Initialize("Test-Realm")
 assert(ErrandMasterDB.settings.wheelSlots[3].id == 42)
@@ -65,11 +75,11 @@ ErrandMasterDB.settings.wheelSlots[7] = secret
 addon.db:Initialize("Test-Realm")
 issecretvalue = nil
 assert(#ErrandMasterDB.settings.wheelSlots == 11 and ErrandMasterDB.settings.wheelSlots[8].id == 123)
-assert(ErrandMasterDB.settings.wheelSlots[3].category == "Repair")
-assert(ErrandMasterDB.settings.wheelSlots[4].category == "Vendor")
-assert(ErrandMasterDB.settings.wheelSlots[5].category == "Mailbox")
-assert(ErrandMasterDB.settings.wheelSlots[6].category == "Trainer")
-assert(ErrandMasterDB.settings.wheelSlots[7].category == "Travel")
+assert(ErrandMasterDB.settings.wheelSlots[3].category == "Vendor")
+assert(ErrandMasterDB.settings.wheelSlots[4].category == "Trainer")
+assert(ErrandMasterDB.settings.wheelSlots[5].category == "Travel")
+assert(ErrandMasterDB.settings.wheelSlots[6].category == "Quests")
+assert(ErrandMasterDB.settings.wheelSlots[7].category == "Skills")
 ErrandMasterDB.settings.wheelRadius = 0/0
 ErrandMasterDB.settings.wheelIconSize = 0/0
 addon.db:Initialize("Test-Realm")
@@ -121,13 +131,13 @@ addon.db:WheelRemove(2); addon.db:WheelRemove(1)
 addon.db:Initialize("Test-Realm")
 assert(#ErrandMasterDB.settings.wheelSlots == 0, "an intentionally empty wheel stays empty")
 local priorLayout = {'Repair','Bank','Auction House','Mailbox','Vendor',
-  'Class Trainer','Custom'}
+  'Class Trainer'}
 for _,name in ipairs(priorLayout) do
   assert(addon.db:WheelInsert({type='category',category=name}))
 end
 local original = ErrandMasterDB.settings.wheelSlots[1]
-assert(addon.db:WheelAddMissingDefaults()==4 and
-  #ErrandMasterDB.settings.wheelSlots==11 and
+assert(addon.db:WheelAddMissingDefaults()==6 and
+  #ErrandMasterDB.settings.wheelSlots==12 and
   ErrandMasterDB.settings.wheelSlots[1]==original)
 assert(addon.db:WheelAddMissingDefaults()==0,'migration action is idempotent')
 ErrandMasterDB.settings.wheelSlots={}

@@ -5,8 +5,8 @@ local SCHEMA = 5
 local MAX_WHEEL, MAX_FOLDER = 24, 8
 local wheelColors = {Copper=true, Amber=true, Green=true, Blue=true,
   Teal=true, Violet=true, Rose=true, Slate=true, Red=true, Gold=true, Magenta=true}
-local wheelCategories = {"Bank", "Auction House", "Repair", "Vendor", "Mailbox",
-  "Trainer", "Travel", "Custom", "Quests", "Skills", "Items"}
+local wheelCategories = {"Services", "Repair", "Vendor", "Trainer", "Travel",
+  "Quests", "Skills", "Items"}
 local function plain(value)
   if type(issecretvalue) == "function" then
     local ok, secret = pcall(issecretvalue, value)
@@ -114,10 +114,11 @@ end
 local function fresh()
   return {schema = SCHEMA, nextId = 1, nextLocationId = 1,
     account = {}, characters = {}, locations = {}, trails = {}, settings = {
-    optimize = true, useTomTom = true, defaultScope = "character", discoverServices = false,
+    optimize = true, useTomTom = true, useWaypointUI = true, defaultScope = "character", discoverServices = false,
     wheelRadius = 100, wheelIconSize = 40, wheelSlots = normalizeSlots(),
     wheelScale = 1, wheelTheme = "Azure", wheelCategoryColors = {},
     wheelSkills = {}, wheelItems = {}, wheelQuestMigrationStatus = "present",
+    wheelServicesMigrationStatus = "present", wheelCustomAccess = "present",
     wheelArtReversed = false, wheelUnlocked = false,
     windowPositions = {},
     trailRecording = false,
@@ -184,6 +185,53 @@ function db:Initialize(character)
   self.trailStoreUnavailable = type(data.trails) ~= "table"
   data.settings = data.settings or {}
   data.settings.wheelSlots = normalizeSlots(data.settings.wheelSlots)
+  -- Migrate built-in categories on edited saves without discarding custom
+  -- folders, actions or their order. The shortcut outside the wheel is retired.
+  if data.settings.wheelHierarchy20261021 ~= true then
+    local slots = data.settings.wheelSlots
+    local legacyRoot=false
+    for _,entry in ipairs(slots) do
+      local category=entry.type=="category" and entry.category
+      if category=="Bank" or category=="Auction House" or
+          category=="Mailbox" or category=="Custom" or category=="Transport" then
+        legacyRoot=true;break
+      end
+    end
+    local seen, kept, firstService = {}, {}, nil
+    for _,entry in ipairs(slots) do
+      local category=entry.type=="category" and entry.category
+      if category=="Bank" or category=="Auction House" or
+          category=="Mailbox" or category=="Custom" or category=="Transport" then
+        if not firstService and (category=="Bank" or category=="Auction House" or
+            category=="Mailbox") then firstService=#kept+1 end
+      elseif category and (category=="Services" or category=="Travel" or
+          category=="Trainer") and seen[category] then
+        -- A duplicate shortcut does not add another menu.
+      else
+        kept[#kept+1]=entry
+        if category then seen[category]=true end
+      end
+    end
+    if legacyRoot and not seen.Services and #kept<MAX_WHEEL then
+      table.insert(kept, math.min(firstService or 1,#kept+1),
+        {type="category",category="Services"})
+    end
+    for _,category in ipairs({"Travel","Trainer"}) do
+      if legacyRoot and not seen[category] and #kept<MAX_WHEEL then
+        kept[#kept+1]={type="category",category=category}
+      end
+    end
+    data.settings.wheelSlots=kept
+    data.settings.wheelHierarchy20261021=true
+  end
+  -- The hierarchy migration above supersedes the old stock-only migration.
+  -- Preserve its status fields for existing saved settings without rerunning it.
+  if data.settings.wheelServicesMigrationStatus == nil then
+    data.settings.wheelServicesMigrationStatus="superseded"
+  end
+  if data.settings.wheelCustomAccess == nil then
+    data.settings.wheelCustomAccess="superseded"
+  end
   -- Run once on old layouts only. A later user removal must remain removed.
   -- Empty custom layouts are intentionally empty, not missing defaults.
   if data.settings.wheelQuestMigrationStatus == nil then
@@ -258,6 +306,9 @@ function db:Initialize(character)
   end
   if data.settings.optimize == nil then data.settings.optimize = true end
   if data.settings.useTomTom == nil then data.settings.useTomTom = true end
+  if type(data.settings.useWaypointUI) ~= "boolean" then
+    data.settings.useWaypointUI = true
+  end
   if type(data.settings.showDestinations) ~= "boolean" then
     data.settings.showDestinations = true
   end
@@ -385,6 +436,31 @@ function db:GetWheelProfessions()
   end
   return result
 end
+-- Use actual learned primary slots, not the optional manual vendor filters.
+-- Unfilled slots expose every trainer; secondary specialties stay available.
+function db:GetWheelTrainerProfessions()
+  local learned,seen={},{}
+  if plain(GetProfessions) and plain(GetProfessionInfo) and
+      type(GetProfessions)=="function" and type(GetProfessionInfo)=="function" then
+    local ok,first,second=pcall(GetProfessions)
+    if ok then
+      for _,index in ipairs({first or false,second or false}) do
+        if plain(index) and type(index)=="number" and index>=1 and index%1==0 then
+          local named,name=pcall(GetProfessionInfo,index)
+          if named and plain(name) and member(primaryTrades,name) and not seen[name] then
+            learned[#learned+1]=name;seen[name]=true
+          end
+        end
+      end
+    end
+  end
+  local result={}
+  for _,name in ipairs(#learned==2 and learned or primaryTrades) do
+    result[#result+1]=name
+  end
+  for _,name in ipairs(commonTrades) do result[#result+1]=name end
+  return result
+end
 function db:SetProfessionPick(slot, name)
   if slot~=1 and slot~=2 then return false end
   if name~=nil and (not plain(name) or not member(primaryTrades,name)) then return false end
@@ -434,6 +510,8 @@ end
 function db:WheelInsert(entry, index)
   local ok, copy = pcall(safeEntry, entry)
   if not ok or not copy then return false end
+  if copy.type=="category" and
+      (copy.category=="Custom" or copy.category=="Transport") then return false end
   local slots = self.data.settings.wheelSlots
   if #slots >= MAX_WHEEL then return false end
   index = index or #slots+1
@@ -447,7 +525,6 @@ function db:WheelAddMissingDefaults()
   for _,entry in ipairs(slots) do
     if entry.type == "category" then present[entry.category] = true end
   end
-  if present["Class Trainer"] then present.Trainer = true end
   local added = 0
   for _,category in ipairs(wheelCategories) do
     if not present[category] and #slots < MAX_WHEEL and
@@ -713,6 +790,38 @@ function db:TrailBucket(character)
   end)
   assert(valid and safe, "Stored trail is corrupt or exceeds bounds")
   if type(bucket.enabled) ~= "boolean" then bucket.enabled = false end
+  return bucket
+end
+
+-- Flight evidence is separate from the ground trail store and its consent.
+-- Reject a damaged bucket rather than silently trusting or rewriting it.
+function db:TransportBucket()
+  assert(self.data and self.character, "ErrandMaster is not initialized")
+  local character=self.data.characters[self.character]
+  local bucket=character.transport
+  if bucket==nil then
+    bucket={enabled=true,legs={}}
+    character.transport=bucket
+  end
+  if not plain(bucket) or type(bucket)~="table" or getmetatable(bucket) or
+      type(bucket.enabled)~="boolean" or not plain(bucket.legs) or
+      type(bucket.legs)~="table" or getmetatable(bucket.legs) then return end
+  return bucket
+end
+
+-- Boat observations are independently scoped and never replace damaged or
+-- build-mismatched saved data. BoatTrips:Bind validates the full leg contents.
+function db:BoatBucket()
+  assert(self.data and self.character, "ErrandMaster is not initialized")
+  local character=self.data.characters[self.character]
+  local bucket=character.boat
+  if bucket==nil then
+    bucket={enabled=true,legs={}}
+    character.boat=bucket
+  end
+  if not plain(bucket) or type(bucket)~="table" or getmetatable(bucket) or
+      type(bucket.enabled)~="boolean" or not plain(bucket.legs) or
+      type(bucket.legs)~="table" or getmetatable(bucket.legs) then return end
   return bucket
 end
 

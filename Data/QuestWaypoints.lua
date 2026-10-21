@@ -27,8 +27,10 @@ local function validText(value)
   return plain(value) and type(value) == "string" and #value >= 1 and
     #value <= 80 and value:match("%S") and not value:find("[%c|]")
 end
+-- A map POI is the game's quest pin, not an exact objective/spawn location.
+-- C_AreaPoiInfo records are unrelated area features: never match by name/ID.
 function waypoints:ForQuest(questID, requestedMap)
-  if not integer(questID) or not integer(requestedMap) then return end
+  if not integer(questID) or (requestedMap ~= nil and not integer(requestedMap)) then return end
   local getIndex, getInfo = method("GetLogIndexForQuestID"), method("GetInfo")
   if not getIndex or not getInfo then return end
   local ok, index = pcall(getIndex, questID)
@@ -40,28 +42,51 @@ function waypoints:ForQuest(questID, requestedMap)
   end)
   if not read or not plain(id) or id ~= questID or
       not validText(title) or not plain(header) or header ~= false then return end
-  local x, y, projected
+  local x, y, mapID, projected
   local getNext = method("GetNextWaypoint")
   if getNext then
     local resolved, map, nextX, nextY = pcall(getNext, questID)
-    if resolved and integer(map) and map == requestedMap and
+    if resolved and integer(map) and (requestedMap == nil or map == requestedMap) and
         coordinate(nextX) and coordinate(nextY) then
-      x, y = nextX, nextY
+      mapID, x, y = map, nextX, nextY
     end
   end
-  if not x then
+  if not x and requestedMap then
     local onMap = method("GetNextWaypointForMap")
-    if not onMap then return end
-    local resolved, nextX, nextY = pcall(onMap, questID, requestedMap)
-    if not resolved or not coordinate(nextX) or not coordinate(nextY) then return end
-    x, y, projected = nextX, nextY, true
+    if onMap then
+      local resolved, nextX, nextY = pcall(onMap, questID, requestedMap)
+      if resolved and coordinate(nextX) and coordinate(nextY) then
+        mapID, x, y, projected = requestedMap, nextX, nextY, true
+      end
+    end
   end
-  local text
-  local getText = method("GetNextWaypointText")
-  if getText then
-    local succeeded, value = pcall(getText, questID)
-    if succeeded and validText(value) then text = value end
+  if x then
+    local text
+    local getText = method("GetNextWaypointText")
+    if getText then
+      local succeeded, value = pcall(getText, questID)
+      if succeeded and validText(value) then text = value end
+    end
+    return {questID=questID,title=title,mapID=mapID,x=x,y=y,
+      text=text,source="game-next-waypoint",projected=projected == true}
   end
-  return {questID=questID,title=title,mapID=requestedMap,x=x,y=y,
-    text=text,source="game-next-waypoint",projected=projected == true}
+  if not requestedMap then return end
+  local getPOIs = method("GetQuestsOnMap")
+  if not getPOIs then return end
+  local succeeded, rows = pcall(getPOIs, requestedMap)
+  if not succeeded or not plain(rows) or type(rows) ~= "table" then return end
+  local counted, size = pcall(function() return #rows end)
+  if not counted or not plain(size) or type(size) ~= "number" then return end
+  for i = 1, math.min(size, 100) do
+    local read, id, map, px, py, isStart = pcall(function()
+      local row = rows[i]
+      if not plain(row) or type(row) ~= "table" then return end
+      return row.questID, row.mapID, row.x, row.y, row.isQuestStart
+    end)
+    if read and plain(id) and id == questID and plain(map) and map == requestedMap and
+        coordinate(px) and coordinate(py) and plain(isStart) and isStart ~= true then
+      return {questID=questID,title=title,mapID=requestedMap,x=px,y=py,
+        source="active-quest-poi",areaTarget=true,projected=false}
+    end
+  end
 end

@@ -11,7 +11,7 @@ from lupa.lua51 import LuaRuntime
 lua = LuaRuntime(unpack_returned_tuples=True)
 f = lua.execute('return dofile("tests/wheel_fixture.lua")()')
 f['root'](f)
-f['click'](f, 4)
+f['click'](f, 3)  # Vendor has a child ring in the current default layout.
 w = f['wheel']
 regions = preview.collect_regions(w, 2, lua.eval('rawget'))
 equal = lua.eval('function(a,b) return a == b end')
@@ -23,4 +23,6 @@ for key in ('shadow', 'iconGlow', 'medallionGlow', 'texture', 'medallion', 'acti
     assert included(w['slots'][1][key]), key
 for key in ('shadows', 'iconGlows', 'medallionGlows', 'icons', 'medallions'):
     assert included(w['historyViews'][1][key][1]), key
+assert w['slots'][1]['iconGlow']['texture'].endswith('GlowPackFood.blp')
+assert w['historyViews'][1]['iconGlows'][3]['texture'].endswith('GlowPackProfessionVendor.blp')
 print('runtime preview includes active, retained and hub material layers')

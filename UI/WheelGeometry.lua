@@ -41,13 +41,22 @@ function geometry.layout(counts, parents, radius, icon, scale, width, height, x,
     local inner,outer=t.innerRadius*fit,t.outerRadius*fit
     local tier={depth=level,count=t.count,centerAngle=centerAngle,sweep=arc,
       innerRadius=inner,outerRadius=outer,radius=(inner+outer)/2,angles={}}
-    -- Fit the entire square inside an inscribed circle, not just its width
-    -- along the arc. Diagonal icon corners otherwise cross narrow sectors.
-    local clearance=(outer-inner)/2
-    if t.count>0 then
-      clearance=math.min(clearance,tier.radius*sin(math.min(pi/2,arc/(2*t.count))))
-    end
-    tier.iconSize=math.min(icon*fit,clearance*math.sqrt(2)*.96)
+    -- Reserve room for the whole square underglow and the sector border.
+    -- A disk around the slot center bounds every square corner, regardless
+    -- of how its screen-aligned sides rotate relative to this wedge.
+    -- A small inward bias creates breathing room between icons and rim labels.
+    -- Recalculate clearance around the shifted center so even dense 24+ wedges
+    -- retain the complete square underlay inside their sector border.
+    tier.iconRadius=tier.radius-math.min(5*fit,(outer-inner)*.10)
+    local radial=math.min(tier.iconRadius-inner,outer-tier.iconRadius)
+    local halfAngle=t.count>0 and arc/(2*t.count) or pi/2
+    local angular=tier.iconRadius*sin(halfAngle)
+    tier.borderInset=math.min(2*fit,math.min(radial,angular)*.12)
+    local clearance=math.min(radial-tier.borderInset,
+      tier.iconRadius*sin(halfAngle-tier.borderInset/tier.iconRadius))
+    local glowLimit=clearance*math.sqrt(2)*.98
+    tier.iconSize=math.min(icon*fit*1.08,glowLimit/1.25)
+    tier.glowSize=tier.iconSize*1.25
     for i=1,t.count do
       tier.angles[i]=level==1 and pi/2-(i-1)*arc/t.count or
         centerAngle+arc/2-(i-.5)*arc/t.count
@@ -58,7 +67,13 @@ function geometry.layout(counts, parents, radius, icon, scale, width, height, x,
 end
 function geometry.icon(tier,index)
   local angle=tier.angles[index]
-  return cos(angle)*tier.radius,sin(angle)*tier.radius
+  return cos(angle)*tier.iconRadius,sin(angle)*tier.iconRadius
+end
+-- Upright label centered directly below its icon on every spoke, including
+-- the lower semicircle (where an outward radial label used to sit above it).
+function geometry.labelPosition(tier,index)
+  local x,y=geometry.icon(tier,index)
+  return x,y-tier.iconSize*.70
 end
 function geometry.rim(tier,index)
   local angle=tier.angles[index]

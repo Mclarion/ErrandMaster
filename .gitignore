@@ -8,3 +8,4 @@ tools/*
 !tools/preview_cards.py
 !tools/preview_wheel_runtime.py
 !tools/export_wheel_border_templates.py
+!tools/prepare_transport_fixture.py

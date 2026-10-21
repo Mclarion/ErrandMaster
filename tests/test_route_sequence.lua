@@ -33,9 +33,13 @@ local uncertain={{id='unresolved',category='Missing',manualPosition=1},
  {id='fixed',mapID=20,x=.1,y=.1,manualPosition=2},{id='ammo',category='Ammo Vendor'}}
 ordered,deferred=addon.route:Sequence(uncertain,{mapID=10,x=.1,y=.1},true,{},context)
 visible=addon.route:DisplayOrder(ordered,deferred)
-assert(visible[1].id=='unresolved' and visible[2].id=='fixed' and visible[3].locationID=='city-ammo')
-assert(visible[2].directYards==nil and visible[3].directYards and visible[3].cumulativeYards==nil,
- 'known later leg must not invent a total across an unresolved manual stop')
+assert(visible[1].id=='fixed' and visible[2].locationID=='city-ammo' and visible[3].id=='unresolved',
+ 'unknown location cannot anchor ahead of located services')
+assert(visible[1].directYards and visible[2].directYards and visible[2].cumulativeYards and
+ visible[2].directYards<30 and visible[3].canOverride==false,
+ 'later services must resolve from the last valid stop, while unknown location is not draggable')
+assert(uncertain[1].manualPosition==1 and uncertain[1].mapID==nil,
+ 'routing must retain the saved unresolved request and its manual order')
 ordered,deferred=addon.route:Sequence({{id='specific',category='Ammo Vendor',npcID=1}},
  {mapID=20,x=.1,y=.1},true,{},context)
 assert(ordered[1].npcID==1,'explicit NPC identity must not be replaced by a nearer same-function NPC')
@@ -44,13 +48,36 @@ local freeUncertain={{id='missing-free',category='Missing'},
  {id='fixed-free',mapID=20,x=.1,y=.1},{id='bank-free',category='Bank'}}
 ordered,deferred=addon.route:Sequence(freeUncertain,{mapID=10,x=.1,y=.1},false,{},context)
 visible=addon.route:DisplayOrder(ordered,deferred)
-assert(visible[1].id=='missing-free' and visible[2].id=='fixed-free' and
- visible[3].locationID=='city-bank','unresolved free stop must remain in order')
-assert(visible[2].directYards==nil and visible[2].cumulativeYards==nil,
- 'a fixed stop after an unresolved nonreserved stop has no known preceding distance')
-assert(visible[3].directYards and visible[3].cumulativeYards==nil,
- 'a later measurable leg must not reconstruct the lost cumulative distance')
-print('unresolved nonreserved stops reset route origin and cumulative distance')
+assert(visible[1].id=='fixed-free' and visible[2].locationID=='city-bank' and
+ visible[3].id=='missing-free','unresolved free stop must be displayed last')
+assert(visible[1].directYards and visible[1].cumulativeYards,
+ 'fixed stop retains its player-origin leg despite earlier missing service')
+assert(visible[2].directYards and visible[2].cumulativeYards and visible[2].directYards<11,
+ 'later service resolves against the preceding located stop')
+print('unresolved free stops move below resolved destinations without losing origin')
+local mailbox={{id='mail',category='Mailbox',manualPosition=1},
+ {id='auction',category='Auction House',manualPosition=2},
+ {id='bank',category='Bank'}, {id='ammo',category='Ammo Vendor'}}
+ordered,deferred=addon.route:Sequence(mailbox,{mapID=10,x=.1,y=.1},false,{},context)
+visible=addon.route:DisplayOrder(ordered,deferred)
+assert(#ordered==3 and #deferred==1 and visible[1].locationID=='city-auction' and
+ visible[2].locationID=='city-bank' and visible[3].locationID=='city-ammo' and
+ visible[4].id=='mail' and visible[4].canOverride==false,
+ 'unresolved Mailbox must not cascade into valid later services')
+assert(visible[2].directYards<11 and visible[3].directYards<11 and
+ visible[3].cumulativeYards and not mailbox[2].mapID,
+ 'resolved legs remain connected and saved errands remain unmodified')
+local walkUnknown=addon.route:DisplayOrder({{id='walk-unknown',mapID=10,x=.2,y=.2,
+ walkStatus='unknown-route',manualPosition=1}},{{id='not-located',manualPosition=1}})
+assert(walkUnknown[1].id=='walk-unknown' and walkUnknown[2].id=='not-located',
+ 'unknown walking path does not make a located destination unorderable')
+local fallback,fallbackDeferred=addon.route:Plan({
+ {id='stale-quest',questID=98,mapID=10,x=.1,y=.1,manualPosition=1},
+ {id='valid',mapID=10,x=.2,y=.2}},10,.1,.1,true,nil,{},1000,1000)
+local fallbackDisplay=addon.route:DisplayOrder(fallback,fallbackDeferred)
+assert(fallbackDisplay[1].id=='valid' and fallbackDisplay[2].id=='stale-quest' and
+ fallbackDisplay[2].canOverride==false and not fallbackDisplay[2].x,
+ 'fallback planner cannot treat stale quest coordinates as a known location')
 CreateFrame=function() return {RegisterEvent=function() end,SetScript=function() end} end
 assert(loadfile('Core/Init.lua'))('ErrandMaster',addon)
 addon.Position=function() return 10,.1,.1 end
@@ -83,5 +110,6 @@ print('other-zone active quests anchor successive service selection')
 addon.quests.OnMap=function() return {} end
 ordered,deferred=addon:Plan()
 visible=addon.route:DisplayOrder(ordered,deferred)
-assert(visible[1].questID==99 and not visible[1].x and not visible[1].y,
- 'a vanished quest objective must not leave a navigable stale snapshot')
+assert(visible[1].locationID=='city-bank' and visible[2].questID==99 and
+ not visible[2].x and not visible[2].y and visible[2].canOverride==false,
+ 'vanished objective must be last, never use stale coordinates or block a valid service')

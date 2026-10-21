@@ -16,12 +16,14 @@ def collect_regions(w, depth, get):
     history = get(w, 'historyViews')
     for level in range(1, depth):
         view = history[level]
-        for key in ('shadows', 'sectors', 'reliefs', 'borders', 'iconGlows',
-                    'medallionGlows', 'icons', 'halos', 'medallions'):
+        for key in ('rimBases', 'rimShadows', 'shadows', 'sectors', 'iconShadows',
+                    'reliefs', 'borders', 'iconGlows', 'medallionGlows',
+                    'icons', 'halos', 'medallions'):
             for i in range(1, w['tiers'][level]['count']+1):
                 regions.append(view[key][i])
-    for key in ('shadow', 'sector', 'relief', 'glow', 'iconGlow', 'medallionGlow',
-                'texture', 'borderGlow', 'medallion', 'activeMedallion'):
+    for key in ('rimBase', 'rimShadow', 'shadow', 'sector', 'iconShadow', 'relief',
+                'glow', 'iconGlow', 'medallionGlow', 'texture', 'borderGlow',
+                'medallion', 'activeMedallion'):
         for i in range(1, w['count']+1):
             regions.append(w['slots'][i][key])
     regions.extend((w['centerShadow'], w['centerArt'], w['centerPlate']))
@@ -36,8 +38,10 @@ def render_scene(depth, large=False, hovered=False):
     if large:
         settings['wheelRadius'], settings['wheelIconSize'], settings['wheelScale'] = 80, 72, 1.5
     f['root'](f)
-    for _ in range(depth-1):
-        f['click'](f, 4)
+    if depth >= 2:
+        f['click'](f, 1)  # Services
+    if depth >= 3:
+        f['click'](f, 4)  # Profession specialties
     w = f['wheel']
     if hovered:
         f['hit'](f,1)
@@ -94,6 +98,19 @@ def render_scene(depth, large=False, hovered=False):
     layers={'BACKGROUND':0,'BORDER':1,'ARTWORK':2,'OVERLAY':3,'HIGHLIGHT':4}
     for r in sorted(regions,key=lambda r:(layers.get(get(r,'layer'),0),get(r,'sublevel') or 0)):
         region(r)
+    label_font = ImageFont.truetype('DejaVuSans.ttf', 10)
+    labels = []
+    for level in range(1, depth):
+        view = w['historyViews'][level]
+        labels.extend(view['labels'][i] for i in range(1,w['tiers'][level]['count']+1))
+    labels.extend(w['slots'][i]['label'] for i in range(1,w['count']+1))
+    for label in labels:
+        if not get(label, 'shown') or not get(label,'text'):
+            continue
+        p = label['point']
+        x,y = round(p[4]-cx+300), round(620-(p[5]-cy+300))
+        draw.multiline_text((x+1,y+1), label['text'], font=label_font, anchor='mm',align='center',fill='black',spacing=0)
+        draw.multiline_text((x,y), label['text'], font=label_font, anchor='mm',align='center',fill='#f4f2e7',spacing=0)
     text = w['centerLabel']['text']
     font = ImageFont.truetype('DejaVuSans.ttf', 12)
     if text:

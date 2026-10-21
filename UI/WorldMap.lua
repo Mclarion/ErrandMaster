@@ -46,6 +46,7 @@ end
 
 local function hidePins(self)
   for _, pin in ipairs(self.pins or {}) do pin:Hide() end
+  if self.targetPin then self.targetPin:Hide() end
 end
 
 function overlay:OnAdded(map)
@@ -88,10 +89,10 @@ local function newPin(canvas)
   icon:SetAllPoints(pin)
   pin.icon = icon
   local glow = pin:CreateTexture(nil, "BACKGROUND")
-  glow:SetSize(28, 28)
+  glow:SetSize(34, 34)
   glow:SetPoint("CENTER", pin, "CENTER")
   glow:SetTexture("Interface\\AddOns\\ErrandMaster\\Textures\\DestinationButtonGlow.blp")
-  glow:SetVertexColor(1, .78, .3, .65)
+  glow:SetVertexColor(1, .78, .3, .9)
   glow:SetBlendMode("ADD")
   glow:Hide()
   pin.glow = glow
@@ -103,7 +104,58 @@ local function newPin(canvas)
   pin.number = number
   return pin
 end
-local function shortName(name)
+local shortName
+-- The active destination is separate from the bounded route/service pool and
+-- never suppresses a native icon. It does not use the minimap launcher artwork.
+function overlay:SetTarget(target)
+  local ok, id, x, y, name, key = pcall(function()
+    return target.mapID, target.x, target.y, target.name, target.id
+  end)
+  if ok and available(key) and (type(key)=="string" or type(key)=="number") and
+      mapID(id) and normalized(x) and normalized(y) then
+    self.target = {mapID=id, x=x, y=y,
+      name=type(name)=="string" and available(name) and name or "Destination"}
+  else self.target = nil end
+  self:RefreshTarget()
+end
+
+function overlay:RefreshTarget()
+  local target, map = self.target, self.map
+  if not target or not map or inCombat() then
+    if self.targetPin then self.targetPin:Hide() end
+    return false
+  end
+  local ok, canvas, id = pcall(function() return map:GetCanvas(), map:GetMapID() end)
+  if not ok or not available(canvas) or not mapID(id) or id ~= target.mapID then
+    if self.targetPin then self.targetPin:Hide() end
+    return false
+  end
+  local sized, width, height = pcall(function() return canvas:GetWidth(), canvas:GetHeight() end)
+  if not sized or not available(width) or not available(height) or
+    type(width)~="number" or type(height)~="number" or
+    width~=width or height~=height or width<=0 or height<=0 or
+    width>10000000 or height>10000000 then
+    if self.targetPin then self.targetPin:Hide() end
+    return false
+  end
+  local pin = self.targetPin
+  if not pin then pin=newPin(canvas); self.targetPin=pin end
+  if pin.canvas ~= canvas then pin:SetParent(canvas); pin.canvas=canvas end
+  local pinSize=math.min(24,math.max(1,math.min(width,height)-2))
+  pin:SetSize(pinSize,pinSize)
+  pin.icon:SetTexture("Interface\\AddOns\\ErrandMaster\\Textures\\PackWaypoint.blp")
+  pin.icon:Show()
+  pin.glow:Show()
+  pin.number:SetText("!")
+  pin.label:SetText("TARGET: " .. (shortName(target.name) or "Destination"))
+  pin:ClearAllPoints()
+  pin:SetPoint("CENTER",canvas,"TOPLEFT",
+    math.max(pinSize/2,math.min(width-pinSize/2,target.x*width)),
+    -math.max(pinSize/2,math.min(height-pinSize/2,target.y*height)))
+  pin:Show()
+  return true
+end
+shortName = function(name)
   if type(name) ~= "string" or not available(name) then return end
   if #name <= 24 then return name end
   local cut = 24
@@ -127,6 +179,7 @@ local function coincidentIcon(self, canvas, x, y, width, height)
   if not result[1] then return end
   local owned = {}
   for _, pin in ipairs(self.pins) do owned[pin] = true end
+  if self.targetPin then owned[self.targetPin] = true end
   for i = 2, math.min(#result, 301) do
     local child = result[i]
     if child and not owned[child] then
@@ -168,8 +221,12 @@ local function addPin(self, canvas, index, entry, kind, width, height, routeNumb
     else pin:Hide(); pin = newPin(canvas); self.pins[index] = pin end
   end
   pin.canvas = canvas
+  local pinSize=math.min(14,math.max(1,math.min(width,height)-2))
+  pin:SetSize(pinSize,pinSize)
   pin:ClearAllPoints()
-  pin:SetPoint("CENTER", canvas, "TOPLEFT", x * width, -y * height)
+  pin:SetPoint("CENTER", canvas, "TOPLEFT",
+    math.max(pinSize/2,math.min(width-pinSize/2,x*width)),
+    -math.max(pinSize/2,math.min(height-pinSize/2,y*height)))
   if category == "Waypoint" then
     pin.icon:SetTexture("Interface\\AddOns\\ErrandMaster\\Textures\\PackWaypoint.blp")
   elseif kind == "service" then pin.icon:SetColorTexture(.2, .75, 1, .9)
@@ -338,6 +395,18 @@ function overlay:Refresh()
   end
   if id ~= self.currentMapID then self.questPage = 1 end
   self.currentMapID = id
+  -- Main-route selection is authoritative even while browsing another map.
+  -- CachedPlan is memoized by Core; do not select from the display-map plan.
+  if callable(addon,"CachedPlan") and callable(addon,"ActiveTarget") then
+    local planned, ordered, deferred = pcall(addon.CachedPlan,addon)
+    local selected
+    if planned and type(ordered)=="table" and available(ordered) and
+        type(deferred)=="table" and available(deferred) then
+      local chosen, result=pcall(addon.ActiveTarget,addon,ordered,deferred)
+      if chosen then selected=result end
+    end
+    self:SetTarget(selected)
+  end
   self.pins = self.pins or {}
   local used = 0
   local waypoint,waypointID,waypointShown
@@ -424,6 +493,7 @@ function overlay:Refresh()
     used=addPin(self,canvas,used,waypoint,"waypoint",width,height,"W")
   end
   for i = used+1, #self.pins do self.pins[i]:Hide() end
+  self:RefreshTarget()
   updateQuests(self, map)
   return true
 end
