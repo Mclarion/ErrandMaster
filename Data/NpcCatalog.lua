@@ -12,8 +12,19 @@ local classes={"Death Knight","Demon Hunter","Druid","Evoker","Hunter",
 local professions={"Alchemy","Blacksmithing","Cooking","Enchanting",
   "Engineering","First Aid","Fishing","Herbalism","Inscription",
   "Jewelcrafting","Leatherworking","Mining","Skinning","Tailoring"}
-local trainerAliases={Alchemist="Alchemy",Herbalist="Herbalism",
-  Fisherman="Fishing",Engineer="Engineering"}
+local trainerAliases={alchemist="Alchemy",herbalist="Herbalism",
+  fisherman="Fishing",engineer="Engineering",leatherworker="Leatherworking",
+  leathercrafter="Leatherworking",blacksmith="Blacksmithing",tailor="Tailoring",
+  enchanter="Enchanting",miner="Mining",skinner="Skinning",cook="Cooking",
+  physician="First Aid"}
+local trainerRanks={apprentice=true,journeyman=true,expert=true,artisan=true,
+  master=true,superior=true}
+local trainerSpecializations={
+  ["dragonscale leatherworker"]="Leatherworking",
+  ["elemental leatherworker"]="Leatherworking",
+  ["tribal leatherworker"]="Leatherworking",
+  ["goblin engineer"]="Engineering",["gnome engineer"]="Engineering",
+  ["shadoweave tailor"]="Tailoring"}
 local function plain(value)
   local ok, safe = pcall(function()
     if type(issecretvalue)=="function" and issecretvalue(value) then return false end
@@ -53,28 +64,39 @@ local function trainerAlias(name, subtitle, flags, trainerFlag)
   local profession
   for _,text in ipairs({name,subtitle}) do
     if type(text)=="string" and plain(text) and #text<=120 then
-      profession=trainerAliases[text] or
-        trainerAliases[text:match("^Journeyman (%a+)$") or ""]
+      -- Provider titles use occupations, not only profession names. Strip
+      -- only known ranks and match the entire remaining title; a merchant
+      -- mentioning leather goods must not become a leatherworking trainer.
+      local title=text:lower():match("^%s*(.-)%s*$"):gsub("%s+"," ")
+      if title=="pet trainer" then return "Pet Trainer" end
+      if title=="weapon master" or title=="weapon trainer" then return "Weapon Trainer" end
+      title=title:gsub(" trainer$","")
+      local rank,occupation=title:match("^(%a+) (.+)$")
+      if trainerRanks[rank] then title=occupation end
+      profession=trainerAliases[title] or trainerSpecializations[title]
       if profession then break end
     end
   end
   if profession then return profession.." Trainer","Profession Trainer" end
 end
-local function vendorSpecialty(subtitle,flags,vendorFlag)
+local function vendorSpecialties(subtitle,flags,vendorFlag)
+  local matches={}
   if not hasFlag(flags,vendorFlag) or not plain(subtitle) or
-      type(subtitle)~="string" or #subtitle>120 then return end
+      type(subtitle)~="string" or #subtitle>120 then return matches end
   local text=subtitle:lower()
   for _,label in ipairs({"Ammo","Reagent","Food"}) do
-    if text:find("%f[%a]"..label:lower().."%f[%A]") then
-      return label.." Vendor"
+    if text:find("%f[%a]"..label:lower().."%f[%A]") or
+        (label=="Reagent" and text:find("%f[%a]reagents%f[%A]")) then
+      matches[#matches+1]={label.." Vendor","QuestieDB NPC subtitle"}
     end
   end
   for _,label in ipairs(professions) do
     local word=label:lower():gsub(" ","%%s+")
     if text:find("%f[%a]"..word.."%f[%A]") then
-      return label.." Vendor","Profession Vendor"
+      matches[#matches+1]={label.." Vendor","QuestieDB NPC subtitle","Profession Vendor"}
     end
   end
+  return matches
 end
 local function faction()
   local result=call(UnitFactionGroup,"player")
@@ -366,7 +388,6 @@ function catalog:LocationsOnMap(mapID, wanted)
       local subtitle=call(npc.subName,id)
       local specialty,trainerGroup=trainerSpecialty(subtitle,flags,self.flags.TRAINER)
       if not specialty then specialty,trainerGroup=trainerAlias(name,subtitle,flags,self.flags.TRAINER) end
-      local vendorType,vendorGroup=vendorSpecialty(subtitle,flags,self.flags.VENDOR)
       local vendorLabels={}
       if hasFlag(flags,self.flags.VENDOR) then
         for _,label in ipairs({"Ammo Vendor","Reagent Vendor","Food Vendor"}) do
@@ -374,8 +395,10 @@ function catalog:LocationsOnMap(mapID, wanted)
             vendorLabels[#vendorLabels+1]={label,"QuestieDB Item vendors/class"}
           end
         end
-        if vendorType and not (self.inventory[id] and self.inventory[id][vendorType]) then
-          vendorLabels[#vendorLabels+1]={vendorType,"QuestieDB NPC subtitle"}
+        for _,kind in ipairs(vendorSpecialties(subtitle,flags,self.flags.VENDOR)) do
+          if not (self.inventory[id] and self.inventory[id][kind[1]]) then
+            vendorLabels[#vendorLabels+1]=kind
+          end
         end
       end
       if type(name)=="string" and #name>0 and #name<=120 and
@@ -407,7 +430,7 @@ function catalog:LocationsOnMap(mapID, wanted)
                           phaseUnverified=phased,friendlyToFaction=friendly,
                           minLevel=minLevel,subtitle=subtitle,
                           specialty=kind[1],trainerGroup=entry[2]=="TRAINER" and trainerGroup or nil,
-                          vendorGroup=entry[2]=="VENDOR" and vendorGroup or nil,
+                          vendorGroup=entry[2]=="VENDOR" and kind[3] or nil,
                           functionEvidence=kind[2] or (kind[1] and "QuestieDB NPC name/subtitle" or nil)}
                         end
                       end

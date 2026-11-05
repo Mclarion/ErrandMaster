@@ -19,7 +19,7 @@ def build(output: Path) -> dict[str, str]:
     images = sorted(p.relative_to(ROOT).as_posix() for p in (ROOT / "Textures").glob("*.blp"))
     names = ["ErrandMaster.toc", "Bindings.xml", "README.md",
              "docs/READINESS.md", "docs/ACCEPTANCE-20261017.md",
-             "docs/RELEASE-v0.6.14-test1.md", "docs/LOCAL-TRANSPORT.md", *runtime, *images]
+             "docs/RELEASE-v0.6.15-test1.md", "docs/LOCAL-TRANSPORT.md", *runtime, *images]
     assert len(names) == len(set(names)) and images, "missing images or duplicate entries"
     manifest = {}
     payload = {}

@@ -54,7 +54,7 @@ for path in [*paths, *sorted((ROOT / "tests").glob("*.lua"))]:
     loadfile(str(path))
 print(f"TOC and syntax: {len(paths)} runtime Lua files")
 for script in ("test_core.lua", "test_locations.lua", "test_npcs.lua", "test_npcs_inventory.lua", "test_npc_diagnostics.lua", "test_npc_normalization.lua", "test_npc_map_budget.lua", "test_discovery.lua", "test_smart_services.lua", "test_discovery_partial.lua",
-               "test_quests.lua", "test_quest_waypoints.lua", "test_quest_native_tracker.lua", "test_quest_route_integration.lua", "test_quest_zone_inventory.lua", "test_walk_graph.lua", "test_trails.lua", "test_trail_world_zero.lua",
+               "test_trainer_titles.lua", "test_service_titles.lua", "test_quests.lua", "test_quest_waypoints.lua", "test_quest_native_tracker.lua", "test_quest_route_integration.lua", "test_quest_zone_inventory.lua", "test_walk_graph.lua", "test_trails.lua", "test_trail_world_zero.lua",
                "test_route_walk.lua", "test_npc_route.lua", "test_zone_search.lua",
                "test_route_sequence.lua", "test_route_global_candidates.lua",
                "test_taxi_advice.lua", "test_flight_distance_rule.lua", "test_transport_catalog.lua", "test_static_transport.lua", "test_route_static_transport.lua", "test_boat_trips.lua", "test_boat_integration.lua",
